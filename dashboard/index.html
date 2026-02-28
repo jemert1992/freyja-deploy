@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FREYJA QUANT ENGINE v2</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>◆</text></svg>">
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+<div id="app">
+
+    <!-- HEADER -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="diamond">◆</span> FREYJA QUANT ENGINE <span class="version-tag">v2</span>
+            </div>
+            <div id="status-badge" class="status-badge disconnected">
+                <span class="dot"></span>CONNECTING...
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="header-metric">
+                <span class="label">LATENCY</span>
+                <span id="latency-value" class="value">---</span>
+            </div>
+            <div class="header-metric">
+                <span class="label">API</span>
+                <span id="api-status" class="value text-green glow-green">LOCALHOST</span>
+            </div>
+            <span id="system-time" class="system-time">00:00:00.000</span>
+        </div>
+    </header>
+
+    <!-- TAB BAR -->
+    <nav class="tab-bar">
+        <button class="tab-btn active" data-tab="dashboard">
+            <span class="tab-icon">◈</span>DASHBOARD
+        </button>
+        <button class="tab-btn" data-tab="controls">
+            <span class="tab-icon">⚙</span>CONTROLS
+        </button>
+        <button class="tab-btn" data-tab="logs">
+            <span class="tab-icon">▤</span>LOGS
+        </button>
+        <button class="tab-btn" data-tab="weather">
+            <span class="tab-icon">☁</span>WEATHER
+        </button>
+    </nav>
+
+    <!-- MAIN CONTENT -->
+    <div class="main-content">
+
+        <!-- TAB 1: DASHBOARD -->
+        <div class="tab-content active" data-tab="dashboard">
+            <div class="metrics-grid">
+                <div id="metric-portfolio-value" class="metric-card green">
+                    <div class="metric-label">Portfolio Value</div>
+                    <div class="metric-value">$0.00</div>
+                </div>
+                <div id="metric-cash-balance" class="metric-card cyan">
+                    <div class="metric-label">Cash Balance</div>
+                    <div class="metric-value cyan">$0.00</div>
+                </div>
+                <div id="metric-open-positions" class="metric-card amber">
+                    <div class="metric-label">Open Positions</div>
+                    <div class="metric-value amber">0</div>
+                </div>
+                <div id="metric-win-rate" class="metric-card green">
+                    <div class="metric-label">Win Rate</div>
+                    <div class="metric-value">0.0%</div>
+                </div>
+                <div id="metric-total-pnl" class="metric-card green">
+                    <div class="metric-label">Total P&L</div>
+                    <div class="metric-value">$0.00</div>
+                </div>
+                <div id="metric-session-pnl" class="metric-card green">
+                    <div class="metric-label">Session P&L</div>
+                    <div class="metric-value">$0.00</div>
+                </div>
+            </div>
+
+            <div class="dashboard-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">▸ Active Positions</span>
+                        <span class="text-dim" style="font-size:10px" id="positions-count">0 open</span>
+                    </div>
+                    <div class="panel-body" style="padding:0">
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Ticker</th><th>Side</th><th>Entry</th><th>Current</th><th>P&L</th><th>Settlement</th><th>VPIN</th></tr></thead>
+                                <tbody id="positions-tbody"><tr><td colspan="7" class="empty-table">No open positions</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">▸ Trade Log</span>
+                        <span class="text-dim" style="font-size:10px" id="trades-count">0 trades</span>
+                    </div>
+                    <div class="panel-body" style="padding:0">
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead><tr><th>Time</th><th>Action</th><th>Ticker</th><th>Side</th><th>Price</th><th>Qty</th><th>P&L</th></tr></thead>
+                                <tbody id="trades-tbody"><tr><td colspan="7" class="empty-table">No trades recorded</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel full-width">
+                    <div class="panel-header">
+                        <span class="panel-title">▸ BTC/USD</span>
+                        <span id="btc-price" class="text-green glow-green" style="font-size:14px;font-weight:700;font-family:var(--font-code)">—</span>
+                    </div>
+                    <div class="panel-body" style="padding:0 0 8px 0;">
+                        <div id="btc-chart" class="chart-container"></div>
+                        <div class="sparkline-row" style="padding:0 12px;">
+                            <div class="sparkline-card">
+                                <div class="sparkline-header"><span class="sparkline-ticker">ETH/USD</span><span id="eth-price" class="sparkline-price">—</span></div>
+                                <div class="sparkline-header" style="margin-bottom:0"><span></span><span id="eth-change" class="sparkline-price" style="font-size:10px">—</span></div>
+                                <canvas id="eth-sparkline" class="sparkline-chart" style="width:100%;height:40px"></canvas>
+                            </div>
+                            <div class="sparkline-card">
+                                <div class="sparkline-header"><span class="sparkline-ticker">SOL/USD</span><span id="sol-price" class="sparkline-price">—</span></div>
+                                <div class="sparkline-header" style="margin-bottom:0"><span></span><span id="sol-change" class="sparkline-price" style="font-size:10px">—</span></div>
+                                <canvas id="sol-sparkline" class="sparkline-chart" style="width:100%;height:40px"></canvas>
+                            </div>
+                            <div class="sparkline-card">
+                                <div class="sparkline-header"><span class="sparkline-ticker">XRP/USD</span><span id="xrp-price" class="sparkline-price">—</span></div>
+                                <div class="sparkline-header" style="margin-bottom:0"><span></span><span id="xrp-change" class="sparkline-price" style="font-size:10px">—</span></div>
+                                <canvas id="xrp-sparkline" class="sparkline-chart" style="width:100%;height:40px"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel full-width">
+                    <div class="panel-header"><span class="panel-title">▸ Signal Indicators</span></div>
+                    <div class="panel-body">
+                        <div class="signals-grid">
+                            <div class="signal-card">
+                                <div class="signal-label">RSI</div>
+                                <div class="gauge-container"><svg id="rsi-gauge" class="gauge-svg" viewBox="0 0 56 56"><circle class="gauge-bg" cx="28" cy="28" r="24"></circle><circle class="gauge-fill" cx="28" cy="28" r="24" stroke-dasharray="150.8" stroke-dashoffset="75.4"></circle></svg></div>
+                                <div id="rsi-value" class="signal-value text-green glow-green">50.0</div>
+                            </div>
+                            <div class="signal-card">
+                                <div class="signal-label">VPIN</div>
+                                <div class="gauge-container"><svg id="vpin-gauge" class="gauge-svg" viewBox="0 0 56 56"><circle class="gauge-bg" cx="28" cy="28" r="24"></circle><circle class="gauge-fill" cx="28" cy="28" r="24" stroke-dasharray="150.8" stroke-dashoffset="75.4"></circle></svg></div>
+                                <div id="vpin-value" class="signal-value text-amber glow-amber">0.500</div>
+                            </div>
+                            <div class="signal-card">
+                                <div class="signal-label">Confidence</div>
+                                <div style="margin: 12px 0 8px"><div id="confidence-value" class="signal-value text-cyan glow-cyan" style="font-size:20px">0.0%</div></div>
+                                <div class="confidence-bar"><div id="confidence-fill" class="confidence-fill" style="width:0%"></div></div>
+                            </div>
+                            <div class="signal-card">
+                                <div class="signal-label">Direction</div>
+                                <div id="direction-arrow" class="direction-arrow" style="margin:8px 0"><span class="text-dim" style="font-size:32px">◆</span></div>
+                                <div id="direction-label" class="signal-value text-dim" style="font-size:12px">NEUTRAL</div>
+                            </div>
+                            <div class="signal-card">
+                                <div class="signal-label">Kelly Size</div>
+                                <div style="margin: 12px 0 8px"><div id="kelly-value" class="signal-value text-green glow-green" style="font-size:20px">$0.00</div></div>
+                                <div class="text-dim" style="font-size:9px;margin-top:4px">POSITION SIZE</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel full-width">
+                    <div class="panel-header"><span class="panel-title">▸ Performance Stats</span></div>
+                    <div class="panel-body">
+                        <div class="perf-stats">
+                            <div class="perf-stat"><div id="stat-total-trades" class="stat-value">0</div><div class="stat-label">Total Trades</div></div>
+                            <div class="perf-stat"><div id="stat-avg-hold" class="stat-value">0m</div><div class="stat-label">Avg Hold Time</div></div>
+                            <div class="perf-stat"><div id="stat-best-trade" class="stat-value" style="color:var(--green)">$0.00</div><div class="stat-label">Best Trade</div></div>
+                            <div class="perf-stat"><div id="stat-worst-trade" class="stat-value" style="color:var(--red)">$0.00</div><div class="stat-label">Worst Trade</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: CONTROLS -->
+        <div class="tab-content" data-tab="controls">
+            <div class="controls-grid">
+                <div class="panel">
+                    <div class="panel-header"><span class="panel-title">▸ Bot Control</span></div>
+                    <div class="panel-body">
+                        <div class="bot-controls">
+                            <button id="btn-start" class="ctrl-btn start">▶ START <span class="spinner"></span></button>
+                            <button id="btn-stop" class="ctrl-btn stop">■ STOP <span class="spinner"></span></button>
+                            <button id="btn-restart" class="ctrl-btn restart">⟳ RESTART <span class="spinner"></span></button>
+                        </div>
+                        <div class="status-info">
+                            <div class="status-item"><div class="label">Status</div><div id="ctrl-status-val" class="value text-dim">—</div></div>
+                            <div class="status-item"><div class="label">Uptime</div><div id="ctrl-uptime-val" class="value">—</div></div>
+                            <div class="status-item"><div class="label">PID</div><div id="ctrl-pid-val" class="value">—</div></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><span class="panel-title">▸ Trading Mode</span></div>
+                    <div class="panel-body">
+                        <div class="mode-toggle-container">
+                            <div id="mode-toggle" class="toggle-switch paper">
+                                <div class="toggle-slider"></div>
+                                <div class="toggle-track">
+                                    <span class="toggle-option opt-paper">PAPER</span>
+                                    <span class="toggle-option opt-live">LIVE</span>
+                                </div>
+                            </div>
+                            <div class="mode-warning"><span id="mode-label" class="text-amber">⚠ Paper trading — no real money at risk</span></div>
+                        </div>
+                        <div class="paper-balance-input">
+                            <label>Paper Balance ($)</label>
+                            <input type="number" id="paper-balance" value="1000" min="0" step="100">
+                        </div>
+                    </div>
+                </div>
+                <div class="panel full-width">
+                    <div class="panel-header">
+                        <span class="panel-title">▸ Aggressiveness Controls</span>
+                        <button id="apply-config-btn" class="apply-btn" disabled>NO CHANGES</button>
+                    </div>
+                    <div class="panel-body">
+                        <div class="sliders-section">
+                            <div class="sliders-section-title">◆ Strategy Parameters</div>
+                            <div class="slider-group">
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Signal Confidence Threshold</span><span id="display-MIN_CONFIDENCE" class="slider-value">0.05</span></div><input type="range" id="slider-MIN_CONFIDENCE" min="0.01" max="0.20" step="0.01" value="0.05"><div class="slider-range-labels"><span>0.01</span><span>0.20</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Min Contract Price (¢)</span><span id="display-MIN_CONTRACT_PRICE" class="slider-value">15</span></div><input type="range" id="slider-MIN_CONTRACT_PRICE" min="5" max="50" step="1" value="15"><div class="slider-range-labels"><span>5</span><span>50</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Max Contract Price (¢)</span><span id="display-MAX_CONTRACT_PRICE" class="slider-value">85</span></div><input type="range" id="slider-MAX_CONTRACT_PRICE" min="50" max="99" step="1" value="85"><div class="slider-range-labels"><span>50</span><span>99</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Kelly Fraction</span><span id="display-KELLY_FRACTION" class="slider-value">0.15</span></div><input type="range" id="slider-KELLY_FRACTION" min="0.05" max="0.50" step="0.01" value="0.15"><div class="slider-range-labels"><span>0.05</span><span>0.50</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Min Expected Value (¢)</span><span id="display-MIN_EV_CENTS" class="slider-value">1.5</span></div><input type="range" id="slider-MIN_EV_CENTS" min="0.5" max="5.0" step="0.1" value="1.5"><div class="slider-range-labels"><span>0.5</span><span>5.0</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Profit Target %</span><span id="display-PROFIT_TARGET_PCT" class="slider-value">0.30</span></div><input type="range" id="slider-PROFIT_TARGET_PCT" min="0.10" max="1.00" step="0.05" value="0.30"><div class="slider-range-labels"><span>0.10</span><span>1.00</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Stop Loss %</span><span id="display-STOP_LOSS_PCT" class="slider-value">0.25</span></div><input type="range" id="slider-STOP_LOSS_PCT" min="0.10" max="0.60" step="0.05" value="0.25"><div class="slider-range-labels"><span>0.10</span><span>0.60</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">VPIN Exit Threshold</span><span id="display-VPIN_EXIT_THRESHOLD" class="slider-value">0.70</span></div><input type="range" id="slider-VPIN_EXIT_THRESHOLD" min="0.50" max="1.00" step="0.01" value="0.70"><div class="slider-range-labels"><span>0.50</span><span>1.00</span></div></div>
+                            </div>
+                        </div>
+                        <div class="sliders-section">
+                            <div class="sliders-section-title">◆ Risk Management</div>
+                            <div class="slider-group">
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Max Positions</span><span id="display-MAX_CONCURRENT_POSITIONS" class="slider-value">3</span></div><input type="range" id="slider-MAX_CONCURRENT_POSITIONS" min="1" max="10" step="1" value="3"><div class="slider-range-labels"><span>1</span><span>10</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Max Exposure ($)</span><span id="display-MAX_TOTAL_EXPOSURE_DOLLARS" class="slider-value">100</span></div><input type="range" id="slider-MAX_TOTAL_EXPOSURE_DOLLARS" min="10" max="500" step="5" value="100"><div class="slider-range-labels"><span>$10</span><span>$500</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Max Position Size ($)</span><span id="display-MAX_POSITION_SIZE_DOLLARS" class="slider-value">25</span></div><input type="range" id="slider-MAX_POSITION_SIZE_DOLLARS" min="5" max="100" step="1" value="25"><div class="slider-range-labels"><span>$5</span><span>$100</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Daily Loss Limit ($)</span><span id="display-DAILY_LOSS_LIMIT_DOLLARS" class="slider-value">20</span></div><input type="range" id="slider-DAILY_LOSS_LIMIT_DOLLARS" min="5" max="100" step="1" value="20"><div class="slider-range-labels"><span>$5</span><span>$100</span></div></div>
+                            </div>
+                        </div>
+                        <div class="sliders-section">
+                            <div class="sliders-section-title">◆ Timing</div>
+                            <div class="slider-group">
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Loop Interval (s)</span><span id="display-LOOP_INTERVAL_SECONDS" class="slider-value">15</span></div><input type="range" id="slider-LOOP_INTERVAL_SECONDS" min="5" max="60" step="1" value="15"><div class="slider-range-labels"><span>5s</span><span>60s</span></div></div>
+                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Scan Interval (s)</span><span id="display-SCAN_INTERVAL_SECONDS" class="slider-value">30</span></div><input type="range" id="slider-SCAN_INTERVAL_SECONDS" min="15" max="120" step="5" value="30"><div class="slider-range-labels"><span>15s</span><span>120s</span></div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 3: LOGS -->
+        <div class="tab-content" data-tab="logs">
+            <div class="log-toolbar">
+                <input type="text" id="log-filter" class="log-search" placeholder="▸ Filter logs...">
+                <button id="autoscroll-btn" class="log-btn active">⤓ AUTO-SCROLL ON</button>
+                <button id="refresh-log-btn" class="log-btn">↻ REFRESH</button>
+                <button id="clear-log-btn" class="log-btn">✕ CLEAR</button>
+            </div>
+            <div id="log-viewer" class="log-viewer">
+                <div class="log-line debug">Connecting to Freyja API server...</div>
+            </div>
+        </div>
+
+        <!-- TAB 4: WEATHER -->
+        <div class="tab-content" data-tab="weather">
+            <div class="weather-header-bar">
+                <div class="weather-header-title">
+                    <span class="weather-header-icon">☁</span>
+                    WEATHER MARKET SCANNER
+                    <span class="weather-header-sub">NWS FORECAST + NORMAL CDF MODEL</span>
+                </div>
+                <div class="weather-header-meta">
+                    <div class="weather-status-dot" id="weather-status-dot"></div>
+                    <span id="weather-status-text" class="text-dim" style="font-size:10px">AWAITING DATA</span>
+                    <span class="weather-divider">│</span>
+                    <span id="weather-city-count" class="text-dim" style="font-size:10px">0 CITIES</span>
+                    <span class="weather-divider">│</span>
+                    <span id="weather-last-update" class="text-dim" style="font-size:10px">LAST: —</span>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">▸ City Selector</span>
+                    <span class="text-dim" style="font-size:10px">SELECT CITY TO VIEW FORECAST &amp; MARKETS</span>
+                </div>
+                <div class="panel-body" style="padding:12px 16px">
+                    <div id="weather-city-chips" class="weather-city-chips">
+                        <span class="text-dim" style="font-size:11px">Loading cities...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="weather-main-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">▸ NWS Forecast</span>
+                        <span id="weather-forecast-city" class="text-dim" style="font-size:10px">— SELECT A CITY —</span>
+                    </div>
+                    <div class="panel-body" style="padding:12px">
+                        <div id="weather-forecast-cards" class="weather-forecast-cards">
+                            <div class="weather-empty-state">Select a city to view forecast</div>
+                        </div>
+                        <div id="weather-model-viz" class="weather-model-viz" style="display:none">
+                            <div class="weather-model-title">◆ NORMAL CDF MODEL</div>
+                            <div id="weather-model-params" class="weather-model-params"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-title">▸ Market Brackets</span>
+                        <span id="weather-markets-city" class="text-dim" style="font-size:10px">— SELECT A CITY —</span>
+                    </div>
+                    <div class="panel-body" style="padding:0">
+                        <div class="table-scroll" style="max-height:400px">
+                            <table class="data-table" id="weather-markets-table">
+                                <thead><tr><th>Bracket</th><th>Model Prob</th><th>Mkt Implied</th><th>Edge</th><th>Vol</th><th>YES Ask</th><th>Signal</th></tr></thead>
+                                <tbody id="weather-markets-tbody"><tr><td colspan="7" class="empty-table">Select a city to view markets</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">▸ Weather Model Config</span>
+                    <span class="text-dim" style="font-size:10px">READ-ONLY — FROM API</span>
+                </div>
+                <div class="panel-body" style="padding:12px 16px">
+                    <div id="weather-config-grid" class="weather-config-grid">
+                        <div class="weather-config-item"><div class="weather-config-label">Enabled</div><div id="wcfg-enabled" class="weather-config-value text-dim">—</div></div>
+                        <div class="weather-config-item"><div class="weather-config-label">Paper Mode</div><div id="wcfg-paper" class="weather-config-value text-dim">—</div></div>
+                        <div class="weather-config-item"><div class="weather-config-label">Min Edge</div><div id="wcfg-min-edge" class="weather-config-value text-dim">—</div></div>
+                        <div class="weather-config-item"><div class="weather-config-label">Kelly Fraction</div><div id="wcfg-kelly" class="weather-config-value text-dim">—</div></div>
+                        <div class="weather-config-item"><div class="weather-config-label">Sigma Inflation</div><div id="wcfg-sigma" class="weather-config-value text-dim">—</div></div>
+                        <div class="weather-config-item"><div class="weather-config-label">Last Fetch</div><div id="wcfg-ts" class="weather-config-value text-dim">—</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<div id="live-modal" class="modal-overlay">
+    <div class="modal">
+        <div class="modal-icon">⚠️</div>
+        <div class="modal-title">SWITCHING TO LIVE TRADING</div>
+        <div class="modal-text">You are about to enable <strong style="color:#ff0033">LIVE TRADING</strong> mode.<br>This will execute real trades with real money on Kalshi.<br><br>Type <strong style="color:#ff0033;letter-spacing:2px">CONFIRM</strong> below to proceed.</div>
+        <input type="text" id="confirm-input" class="modal-input" placeholder="Type CONFIRM" autocomplete="off" spellcheck="false">
+        <div class="modal-buttons">
+            <button id="cancel-modal" class="modal-btn cancel">✕ CANCEL</button>
+            <button id="confirm-btn" class="modal-btn confirm" disabled>▶ ENABLE LIVE</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast-container" class="toast-container"></div>
+<script src="./app.js"></script>
+</body>
+</html>
