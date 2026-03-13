@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Freyja Quant Engine — Control API Server + Dashboard Host
+Freyja Quant Engine v2 — Control API Server + Dashboard Host
 Runs on the DigitalOcean droplet at 0.0.0.0:8080
 Pure Python 3 stdlib — no pip packages required.
 
@@ -20,6 +20,9 @@ API Endpoints:
     GET  /api/config   — Current .env config
     POST /api/config   — Update .env config & restart
     GET  /api/balance  — Balance from state.json
+    GET  /api/weather  — Weather dashboard data (NWS + ECMWF + markets)
+    GET  /api/arb      — Arb scanner results (v2)
+    GET  /api/journal  — Trade journal + calibration stats (v2)
 """
 
 import json
@@ -612,6 +615,16 @@ class FreyjaHandler(BaseHTTPRequestHandler):
                     self.send_json({"city": city_code, "markets": markets})
                 except Exception as e:
                     self.send_json({"error": str(e)}, 500)
+            elif api_path == '/api/arb':
+                try:
+                    self.send_json(get_arb_scan_data())
+                except Exception as e:
+                    self.send_json({"error": str(e)}, 500)
+            elif api_path == '/api/journal':
+                try:
+                    self.send_json(get_journal_data())
+                except Exception as e:
+                    self.send_json({"error": str(e)}, 500)
             else:
                 self.send_json({"error": "Not found"}, 404)
             return
@@ -661,6 +674,171 @@ class FreyjaHandler(BaseHTTPRequestHandler):
 
         else:
             self.send_json({"error": "Not found"}, 404)
+
+
+# ── Arb Scanner Helpers (v2) ─────────────────────────────────────────────────
+
+def get_arb_scan_data():
+    """Run a quick arb scan using the Kalshi public API and return results."""
+    result = {"ts": time.time(), "opportunities": [], "events_scanned": 0}
+
+    try:
+        # Fetch active events
+        events_url = f"{KALSHI_PUBLIC_API}/events?status=open&limit=100"
+        events_data = _kalshi_public_get(events_url)
+        events = events_data.get("events", [])
+        result["events_scanned"] = len(events)
+
+        profitable_opps = []
+        FEE_RATE = 0.07
+
+        for event in events[:100]:
+            event_ticker = event.get("event_ticker", "")
+            if not event_ticker:
+                continue
+
+            try:
+                markets_url = f"{KALSHI_PUBLIC_API}/events/{event_ticker}/markets"
+                markets_data = _kalshi_public_get(markets_url)
+                markets = markets_data.get("markets", [])
+            except Exception:
+                continue
+
+            if not markets:
+                continue
+
+            # Check complement arb (binary)
+            if len(markets) == 1:
+                m = markets[0]
+                ya = m.get("yes_ask")
+                na = m.get("no_ask")
+                if ya and na and ya > 0 and na > 0:
+                    combined = ya + na
+                    if combined < 100:
+                        gross = 100 - combined
+                        fee = gross * FEE_RATE
+                        net = gross - fee
+                        if net > 0:
+                            profitable_opps.append({
+                                "type": "complement",
+                                "event": event.get("title", event_ticker)[:80],
+                                "event_ticker": event_ticker,
+                                "tickers": [m.get("ticker", "")],
+                                "cost_cents": combined,
+                                "net_profit_cents": round(net, 1),
+                                "net_profit_pct": round(net / combined * 100, 2),
+                            })
+
+            # Check partition arb (multi-outcome)
+            elif len(markets) >= 2:
+                yes_asks = []
+                illiquid = False
+                for m in markets:
+                    ya = m.get("yes_ask")
+                    if ya is None or ya <= 0:
+                        illiquid = True
+                        break
+                    yes_asks.append(ya)
+
+                if not illiquid and yes_asks:
+                    combined = sum(yes_asks)
+                    if combined < 100:
+                        gross = 100 - combined
+                        fee = gross * FEE_RATE
+                        net = gross - fee
+                        if net > 0:
+                            profitable_opps.append({
+                                "type": "partition",
+                                "event": event.get("title", event_ticker)[:80],
+                                "event_ticker": event_ticker,
+                                "tickers": [m.get("ticker", "") for m in markets],
+                                "cost_cents": combined,
+                                "net_profit_cents": round(net, 1),
+                                "net_profit_pct": round(net / combined * 100, 2),
+                                "num_outcomes": len(markets),
+                            })
+
+            # Rate limit
+            time.sleep(0.05)
+
+        profitable_opps.sort(key=lambda x: x.get("net_profit_pct", 0), reverse=True)
+        result["opportunities"] = profitable_opps[:20]
+        result["profitable_count"] = len(profitable_opps)
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
+# ── Trade Journal Helpers (v2) ───────────────────────────────────────────────
+
+JOURNAL_FILE = BOT_DIR / "trade_journal.json"
+CALIBRATION_FILE = BOT_DIR / "calibration_stats.json"
+
+
+def get_journal_data():
+    """Read trade journal and calibration stats from disk."""
+    result = {"ts": time.time()}
+
+    # Read predictions
+    if JOURNAL_FILE.exists():
+        try:
+            predictions = json.loads(JOURNAL_FILE.read_text())
+            result["total_predictions"] = len(predictions)
+
+            # Recent predictions
+            recent = predictions[-20:] if predictions else []
+            result["recent_predictions"] = [
+                {
+                    "prediction_id": p.get("prediction_id", ""),
+                    "market_ticker": p.get("market_ticker", ""),
+                    "market_title": p.get("market_title", "")[:60],
+                    "category": p.get("category", ""),
+                    "model_prob": round(p.get("model_prob", 0), 3),
+                    "market_price": round(p.get("market_price", 0), 3),
+                    "edge": round(p.get("edge", 0), 3),
+                    "traded": p.get("traded", False),
+                    "side": p.get("side", ""),
+                    "resolved": p.get("resolved", False),
+                    "resolution": p.get("resolution"),
+                    "brier_score": round(p.get("brier_score", 0), 4) if p.get("brier_score") is not None else None,
+                    "pnl_dollars": round(p.get("pnl_dollars", 0), 2) if p.get("pnl_dollars") is not None else None,
+                    "model_source": p.get("model_source", ""),
+                    "timestamp": p.get("timestamp", 0),
+                }
+                for p in recent
+            ]
+        except Exception as e:
+            result["journal_error"] = str(e)
+            result["total_predictions"] = 0
+            result["recent_predictions"] = []
+    else:
+        result["total_predictions"] = 0
+        result["recent_predictions"] = []
+
+    # Read calibration stats
+    if CALIBRATION_FILE.exists():
+        try:
+            stats = json.loads(CALIBRATION_FILE.read_text())
+            result["calibration"] = {
+                "mean_brier_score": stats.get("mean_brier_score", 0),
+                "win_rate": stats.get("win_rate", 0),
+                "total_pnl": stats.get("total_pnl", 0),
+                "profit_factor": stats.get("profit_factor", 0),
+                "resolved_predictions": stats.get("resolved_predictions", 0),
+                "traded_count": stats.get("traded_count", 0),
+                "category_stats": stats.get("category_stats", {}),
+                "model_stats": stats.get("model_stats", {}),
+                "calibration_bins": stats.get("calibration_bins", {}),
+            }
+        except Exception as e:
+            result["calibration_error"] = str(e)
+            result["calibration"] = {}
+    else:
+        result["calibration"] = {}
+
+    return result
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
