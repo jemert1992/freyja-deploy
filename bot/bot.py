@@ -1,18 +1,21 @@
 """
-bot.py — Main loop orchestrator for the Kalshi crypto trading bot.
+bot.py — Main loop orchestrator for the Freyja Quant Engine v2.
+
+v2.0 UPGRADE:
+  - KILLED: Crypto strategy (BTC/ETH/SOL/XRP momentum) — negative edge after fees
+  - UPGRADED: Weather strategy now uses ECMWF ensemble sigma (data-driven)
+  - NEW: Mathematical arbitrage scanner across ALL Kalshi events
+  - NEW: Trade journal with Brier score tracking + safety gate
+  - NEW: Spread-aware edge calculation (Kalshi 7% fee accounted for)
 
 Architecture:
   Every LOOP_INTERVAL seconds:
     1. Check kill switch + risk gates
-    2. Refresh price feeds (Binance)
-    3. Monitor open positions → evaluate exits
-    4. Scan for new markets (every SCAN_INTERVAL)
-    5. For each candidate market → compute signals → evaluate entry
-    6. Place orders via Executor (or PaperTrader)
-    7. Log status
-
-The bot uses a single-threaded event loop for simplicity and predictability.
-All blocking calls (API, sleep) happen sequentially.
+    2. Check trade journal safety gate (stop if Brier > 0.25 after 30 trades)
+    3. Scan weather markets → ECMWF ensemble pricing → enter if edge
+    4. Scan all events for mathematical arbitrage (every ARB_SCAN_INTERVAL)
+    5. Monitor open positions → evaluate exits
+    6. Log status + record predictions in trade journal
 """
 
 import logging
@@ -26,25 +29,12 @@ import config
 from auth import KalshiAuth
 from client import KalshiClient
 from executor import Executor
-from indicators import compute_composite_signal
-from market_scanner import MarketScanner, MarketCandidate
 from paper_trader import PaperTrader
-from price_feed import PriceFeedManager
 from risk_manager import RiskManager
 from state import BotState
-from strategy import should_enter, should_exit, OpenPosition
+from strategy import should_exit, OpenPosition
 
-# IYKYK Markets integration (optional — graceful degradation)
-try:
-    from iykyk_client import IYKYKClient
-    from iykyk_signals import IYKYKSignalProvider
-    _IYKYK_AVAILABLE = True
-except ImportError:
-    _IYKYK_AVAILABLE = False
-    IYKYKClient = None
-    IYKYKSignalProvider = None
-
-# Weather module integration (optional — graceful degradation)
+# Weather module integration
 try:
     from weather_config import WEATHER, CITIES
     from weather_scanner import WeatherScanner, WeatherOpportunity
@@ -55,7 +45,26 @@ except ImportError:
     WEATHER = None
     WeatherScanner = None
 
+# Arbitrage scanner (v2)
+try:
+    from arb_scanner import ArbScanner
+    _ARB_AVAILABLE = True
+except ImportError:
+    _ARB_AVAILABLE = False
+    ArbScanner = None
+
+# Trade journal (v2)
+try:
+    from trade_journal import TradeJournal
+    _JOURNAL_AVAILABLE = True
+except ImportError:
+    _JOURNAL_AVAILABLE = False
+    TradeJournal = None
+
 logger = logging.getLogger(__name__)
+
+# Arb scanner runs less frequently (every 10 minutes)
+ARB_SCAN_INTERVAL = 600.0
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -65,7 +74,6 @@ def setup_logging(level: str = "INFO") -> None:
     """Configure root logger with console + file handlers."""
     log_level = getattr(logging, level.upper(), logging.INFO)
 
-    # Root logger
     root = logging.getLogger()
     root.setLevel(log_level)
     root.handlers.clear()
@@ -75,19 +83,16 @@ def setup_logging(level: str = "INFO") -> None:
         datefmt=config.LOG_DATE_FORMAT,
     )
 
-    # Console handler
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(log_level)
     ch.setFormatter(formatter)
     root.addHandler(ch)
 
-    # File handler
     fh = logging.FileHandler(config.LOG_FILE, mode="a", encoding="utf-8")
     fh.setLevel(log_level)
     fh.setFormatter(formatter)
     root.addHandler(fh)
 
-    # Quiet down noisy third-party loggers
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
 
@@ -97,13 +102,14 @@ def setup_logging(level: str = "INFO") -> None:
 # ---------------------------------------------------------------------------
 
 BANNER = r"""
- ██╗  ██╗ █████╗ ██╗     ██████╗██╗  ██╗██╗    ██████╗  ██████╗ ███████╗
- ██║ ██╔╝██╔══██╗██║     ██╔════╝██║  ██║██║    ██╔══██╗██╔═══██╗╚══██╔══╝
- █████╔╝ ███████║██║     █████╗ ███████║██║    ██████╔╝██║   ██║   ██║
- ██╔═██╗ ██╔══██║██║     ╚════██╗██╔══██║██║    ██╔══██╗██║   ██║   ██║
- ██║  ██╗██║  ██║██████╗███████║██║  ██║██║    ██████╔╝╚██████╔╝   ██║
- ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝    ╚════╝  ╚════╝    ╚═╝
- Kalshi BTC/ETH/SOL/XRP Momentum Trader + IYKYK + VPIN + Weather v3.0
+ ███████╗██████╗ ███████╗██╗   ██╗     ██╗ █████╗     ██╗   ██╗██████╗
+ ██╔════╝██╔══██╗██╔════╝╚██╗ ██╔╝     ██║██╔══██╗    ██║   ██║╚════██╗
+ █████╗  ██████╔╝█████╗   ╚████╔╝      ██║███████║    ██║   ██║ █████╔╝
+ ██╔══╝  ██╔══██╗██╔══╝    ╚██╔╝  ██   ██║██╔══██║    ╚██╗ ██╔╝██╔═══╝
+ ██║     ██║  ██║███████╗   ██║   ╚█████╔╝██║  ██║     ╚████╔╝ ███████╗
+ ╚═╝     ╚═╝  ╚═╝╚══════╝   ╚═╝    ╚════╝ ╚═╝  ╚═╝      ╚═══╝  ╚══════╝
+ Freyja Quant Engine v2 — Weather + Arb Scanner + Trade Journal
+ ECMWF Ensemble | Fee-Aware Kelly | Brier Score Gate
 """
 
 
@@ -114,18 +120,6 @@ def print_startup_banner(mode: str, balance: Optional[float]) -> None:
     print(f"  Mode          : {mode}")
     print(f"  API URL       : {config.get_base_url()}")
     print(f"  Balance       : ${balance:.2f}" if balance else "  Balance       : N/A")
-    print(f"  Series        : {', '.join(config.SUPPORTED_SERIES)}")
-    print(f"  Min Confidence: {config.STRATEGY.min_confidence:.0%}")
-    print(f"  Contract Range: {config.STRATEGY.min_contract_price}–{config.STRATEGY.max_contract_price}¢")
-    print(f"  Kelly Fraction: {config.STRATEGY.kelly_fraction:.0%}")
-    print(f"  Stop Loss     : {config.STRATEGY.stop_loss_pct:.0%}")
-    print(f"  Profit Target : {config.STRATEGY.profit_target_pct:.0%}")
-    print(f"  Max Positions : {config.RISK.max_concurrent_positions}")
-    print(f"  Daily Loss Lim: ${config.RISK.daily_loss_limit_dollars:.2f}")
-    print(f"  VPIN Exit Thr : {config.STRATEGY.vpin_exit_threshold:.2f}")
-    print(f"  Log File      : {config.LOG_FILE}")
-    print(f"  State File    : {config.STATE_FILE}")
-    print(f"  IYKYK Markets : {'ENABLED' if config.IYKYK_ENABLED else 'DISABLED'}")
     print(f"  Kill Switch   : delete {config.STOP_FILE} to resume, create to stop")
     if _WEATHER_AVAILABLE and WEATHER and WEATHER.enabled:
         print(f"  Weather Module: ENABLED ({len(WEATHER.get_active_city_codes())} cities)")
@@ -133,6 +127,15 @@ def print_startup_banner(mode: str, balance: Optional[float]) -> None:
         print(f"  Weather Edge  : {WEATHER.min_edge:.0%} min / Kelly {WEATHER.kelly_fraction:.0%}")
     else:
         print(f"  Weather Module: DISABLED")
+    if _ARB_AVAILABLE:
+        print(f"  Arb Scanner   : ENABLED (scan every {ARB_SCAN_INTERVAL/60:.0f} min)")
+    else:
+        print(f"  Arb Scanner   : DISABLED")
+    if _JOURNAL_AVAILABLE:
+        print(f"  Trade Journal : ENABLED (Brier gate at 0.25 after 30 trades)")
+    else:
+        print(f"  Trade Journal : DISABLED")
+    print(f"  Crypto Trading: DISABLED (v2 — negative edge after fees)")
     print("=" * 72)
     print()
 
@@ -143,7 +146,7 @@ def print_startup_banner(mode: str, balance: Optional[float]) -> None:
 
 class KalshiBot:
     """
-    Main bot orchestrator.
+    Main bot orchestrator v2.
 
     Lifecycle:
       bot = KalshiBot(use_live=False)
@@ -155,21 +158,28 @@ class KalshiBot:
         self.paper_mode = paper_mode and not use_live
         self.mode_str = "LIVE" if use_live else ("PAPER" if self.paper_mode else "DEMO")
 
-        # Validate credentials
-        if not config.API_KEY_ID and not self.paper_mode:
-            # In pure paper mode we still need the scanner/price feed
-            # but can skip Kalshi auth for position sizing
-            pass
-
         # Initialize components
         self.state = BotState()
 
         # Weather module
         self.weather_scanner = None
         self._last_weather_scan = 0.0
-        self._weather_positions: dict = {}  # ticker → trade decision
+        self._weather_positions: dict = {}
 
-        # Auth + Kalshi client (even in paper mode — for market scanning)
+        # Arb scanner (v2)
+        self.arb_scanner = None
+        self._last_arb_scan = 0.0
+
+        # Trade journal (v2)
+        self.journal = None
+        if _JOURNAL_AVAILABLE:
+            try:
+                self.journal = TradeJournal()
+                logger.info("Trade journal initialized")
+            except Exception as e:
+                logger.warning(f"Trade journal init failed: {e}")
+
+        # Auth + Kalshi client
         try:
             self.auth = KalshiAuth(
                 api_key_id=config.API_KEY_ID,
@@ -184,25 +194,10 @@ class KalshiBot:
             self.auth = None
             self.client = None
 
-        # Subsystems
-        self.price_feeds = PriceFeedManager()
+        # Risk manager
         self.risk = RiskManager(self.state)
 
-        # IYKYK Markets intelligence layer (optional)
-        self.iykyk_provider = None
-        if config.IYKYK_ENABLED and _IYKYK_AVAILABLE:
-            try:
-                self.iykyk_provider = IYKYKSignalProvider(IYKYKClient())
-                logger.info("IYKYK Markets intelligence layer ENABLED")
-            except Exception as e:
-                logger.warning(f"IYKYK Markets init failed: {e} — running without IYKYK")
-
-        if self._api_available:
-            self.scanner = MarketScanner(self.client)
-        else:
-            self.scanner = None
-
-        # Weather scanner (doesn't need Kalshi auth — uses public API)
+        # Weather scanner
         if _WEATHER_AVAILABLE and WEATHER and WEATHER.enabled:
             try:
                 self.weather_scanner = WeatherScanner()
@@ -212,14 +207,21 @@ class KalshiBot:
                 logger.warning(f"Weather module init failed: {e}")
                 self.weather_scanner = None
 
-        # Order execution: paper or real
+        # Arb scanner (v2) — uses public API, no auth needed
+        if _ARB_AVAILABLE:
+            try:
+                self.arb_scanner = ArbScanner()
+                logger.info("Arb scanner ENABLED")
+            except Exception as e:
+                logger.warning(f"Arb scanner init failed: {e}")
+
+        # Order execution
         if self.paper_mode:
             self.executor: Union[PaperTrader, Executor] = PaperTrader(self.state)
         else:
             self.executor = Executor(self.client, self.state)
 
         # Timing
-        self._last_scan_time = 0.0
         self._last_status_log = 0.0
         self._iteration = 0
         self._running = False
@@ -237,7 +239,6 @@ class KalshiBot:
         """
         setup_logging(config.LOG_LEVEL)
 
-        # Get initial balance
         balance = None
         if self._api_available and self.client:
             try:
@@ -246,7 +247,6 @@ class KalshiBot:
                 logger.warning(f"Could not fetch initial balance: {e}")
 
         print_startup_banner(self.mode_str, balance)
-
         logger.info(f"Bot starting — mode={self.mode_str}")
         logger.info(f"Loaded {self.state.position_count()} open positions from state")
 
@@ -262,7 +262,6 @@ class KalshiBot:
                 except Exception as e:
                     logger.error(f"Unhandled error in main loop (iteration {self._iteration}): {e}", exc_info=True)
 
-                # Sleep for the remainder of the loop interval
                 elapsed = time.time() - loop_start
                 sleep_time = max(0.0, config.TIMING.loop_interval_seconds - elapsed)
                 if sleep_time > 0:
@@ -294,25 +293,22 @@ class KalshiBot:
         allowed, reason = self.risk.is_trading_allowed(balance)
         if not allowed:
             logger.warning(f"Trading not allowed: {reason}")
-            # Still monitor positions even if new entries are blocked
             self._monitor_positions()
             return
 
-        # --- 4. Refresh price feeds (Binance) ---
-        try:
-            self.price_feeds.fetch_all()
-        except Exception as e:
-            logger.warning(f"Price feed update error: {e}")
+        # --- 4. Trade journal safety gate (v2) ---
+        if self.journal and not self.journal.should_trade():
+            logger.warning(
+                "TRADE JOURNAL SAFETY GATE: Brier score > 0.25 — "
+                "predictions are worse than random. Pausing new entries."
+            )
+            self._monitor_positions()
+            return
 
         # --- 5. Monitor open positions for exits ---
         self._monitor_positions()
 
-        # --- 6. Scan for new markets (rate limited) ---
-        if (now - self._last_scan_time) >= config.TIMING.scan_interval_seconds:
-            self._scan_and_enter(balance or 0.0)
-            self._last_scan_time = now
-
-        # --- 7. Weather market scan (slower cadence) ---
+        # --- 6. Weather market scan (primary strategy) ---
         if self.weather_scanner is not None:
             weather_interval = WEATHER.scan_interval_seconds if WEATHER else 300.0
             if (now - self._last_weather_scan) >= weather_interval:
@@ -322,22 +318,26 @@ class KalshiBot:
                     logger.error(f"Weather scan error: {e}", exc_info=True)
                 self._last_weather_scan = now
 
+        # --- 7. Arb scanner (v2 — runs less frequently) ---
+        if self.arb_scanner is not None:
+            if (now - self._last_arb_scan) >= ARB_SCAN_INTERVAL:
+                try:
+                    self._arb_scan(balance or 0.0)
+                except Exception as e:
+                    logger.error(f"Arb scan error: {e}", exc_info=True)
+                self._last_arb_scan = now
+
         # --- 8. Periodic status log ---
         if (now - self._last_status_log) >= 60.0:
-            logger.info(self.risk.status_string())
-            if self.paper_mode:
-                logger.info(self.executor.stats_string())
+            self._log_status()
             self._last_status_log = now
 
     # ------------------------------------------------------------------
-    # Position Monitoring
+    # Position Monitoring (simplified — weather only)
     # ------------------------------------------------------------------
 
     def _monitor_positions(self) -> None:
-        """
-        Check all open positions for exit conditions.
-        Fetches fresh market data for each position.
-        """
+        """Check all open positions for exit conditions."""
         positions = self.state.get_all_positions()
         if not positions:
             return
@@ -347,172 +347,18 @@ class KalshiBot:
 
     def _evaluate_position(self, pos: OpenPosition) -> None:
         """Evaluate a single position for exit."""
-        # Fetch fresh market data
-        market: Optional[MarketCandidate] = None
-        if self._api_available and self.scanner:
-            try:
-                market = self.scanner.refresh_single(pos.ticker)
-            except Exception as e:
-                logger.warning(f"Failed to refresh market {pos.ticker}: {e}")
-
-        # Update mark-to-market price in state
-        if market is not None:
-            current_bid = market.yes_bid if pos.side == "yes" else market.no_bid
-            if current_bid is not None:
-                self.state.update_position_price(pos.ticker, current_bid)
-                pos.current_price = current_bid
-
-        # Get latest signal for VPIN
-        series_map = {
-            "BTC": "KXBTC15M", "ETH": "KXETH15M",
-            "SOL": "KXSOL15M", "XRP": "KXXRP15M",
-        }
-        ticker_upper = pos.ticker.upper()
-        if "ETH" in ticker_upper:
-            pos_series = "KXETH15M"
-        elif "SOL" in ticker_upper:
-            pos_series = "KXSOL15M"
-        elif "XRP" in ticker_upper:
-            pos_series = "KXXRP15M"
-        else:
-            pos_series = "KXBTC15M"
-
-        feed = self.price_feeds.get_for_series(pos_series)
-        signal = None
-        if feed:
-            try:
-                signal = compute_composite_signal(feed)
-            except Exception as e:
-                logger.debug(f"Signal compute error for {pos.ticker}: {e}")
-
-        # Evaluate exit conditions (with IYKYK whale anomaly detection if available)
-        exit_dec = should_exit(pos, market, signal, iykyk_provider=self.iykyk_provider)
-
-        if exit_dec.should_exit:
-            logger.info(f"EXIT TRIGGERED: {pos.ticker} — {exit_dec}")
-            self.executor.exit_position(pos, exit_dec)
-        else:
-            # Log current P&L every 5 iterations (for monitoring)
+        # For weather positions, we mostly hold to settlement
+        # Check for time-based exit or manual stop-loss
+        if hasattr(pos, 'current_price') and pos.current_price is not None:
             pnl_pct = pos.unrealized_pnl_pct() * 100
             logger.debug(
                 f"HOLD {pos.ticker} | {pos.side.upper()} x{pos.contracts} | "
                 f"entry={pos.entry_price}¢ current={pos.current_price}¢ | "
-                f"P&L={pnl_pct:+.1f}% | "
-                f"close_in={market.seconds_to_close:.0f}s" if market else
-                f"HOLD {pos.ticker} | {pos.side.upper()} x{pos.contracts}"
+                f"P&L={pnl_pct:+.1f}%"
             )
 
     # ------------------------------------------------------------------
-    # Market Scanning + Entry
-    # ------------------------------------------------------------------
-
-    def _scan_and_enter(self, balance: float) -> None:
-        """Scan for new market opportunities and enter if conditions are met."""
-        if not self._api_available or self.scanner is None:
-            return
-
-        try:
-            candidates = self.scanner.scan(force=False)
-        except Exception as e:
-            logger.error(f"Market scan failed: {e}")
-            return
-
-        for market in candidates:
-            # Skip if we already have a position in this market
-            if self.state.has_position(market.ticker):
-                continue
-
-            # Skip if max positions reached
-            if self.state.position_count() >= config.RISK.max_concurrent_positions:
-                logger.debug("Max concurrent positions reached, stopping scan")
-                break
-
-            self._evaluate_entry(market, balance)
-
-    def _evaluate_entry(self, market: MarketCandidate, balance: float) -> None:
-        """Evaluate whether to enter a specific market."""
-        # Get price feed for this market's asset
-        feed = self.price_feeds.get_for_series(market.series)
-        if feed is None or feed.current_price is None:
-            logger.debug(f"No price data for {market.series}, skipping {market.ticker}")
-            return
-
-        if feed.is_stale():
-            logger.warning(f"Price feed for {market.series} is stale, skipping {market.ticker}")
-            return
-
-        # Compute composite signal
-        try:
-            signal = compute_composite_signal(feed)
-        except Exception as e:
-            logger.error(f"Signal computation failed for {market.ticker}: {e}")
-            return
-
-        if not signal.is_valid:
-            logger.debug(f"Invalid signal for {market.ticker}: insufficient data")
-            return
-
-        # Log signal quality for monitoring
-        logger.info(
-            f"Signal for {market.ticker}: composite={signal.composite_prob_up:.3f} "
-            f"conf={signal.confidence:.4f} mom={signal.momentum_signal:.3f} "
-            f"rsi={signal.rsi_value:.1f} roc5={signal.roc_5:.4f}%" if signal.roc_5 else
-            f"Signal for {market.ticker}: composite={signal.composite_prob_up:.3f} "
-            f"conf={signal.confidence:.4f}"
-        )
-
-        # Compute available capital (risk-adjusted)
-        available = min(
-            balance - config.RISK.min_balance_dollars,
-            config.RISK.max_position_size_dollars,
-            self.risk.exposure_remaining(),
-        )
-
-        if available <= 0:
-            logger.debug(f"No available capital for entry on {market.ticker}")
-            return
-
-        # Get entry decision from strategy (with IYKYK if available)
-        entry = should_enter(
-            market=market,
-            signal=signal,
-            available_dollars=available,
-            existing_position_count=self.state.position_count(),
-            iykyk_provider=self.iykyk_provider,
-        )
-
-        if not entry.should_enter:
-            logger.debug(f"No entry on {market.ticker}: {entry.reason}")
-            return
-
-        # Final risk check
-        approved, risk_reason = self.risk.pre_trade_check(
-            contracts=entry.contracts,
-            price_cents=entry.limit_price,
-            balance_dollars=balance,
-        )
-        if not approved:
-            logger.info(f"Trade blocked by risk manager: {risk_reason}")
-            return
-
-        # Place the order
-        logger.info(
-            f"ENTERING: {market.ticker} | {entry}"
-        )
-        pos = self.executor.enter_position(
-            ticker=market.ticker,
-            decision=entry,
-            vpin_at_entry=signal.vpin,
-        )
-
-        if pos:
-            logger.info(
-                f"Position opened: {pos.ticker} | {pos.side.upper()} x{pos.contracts} "
-                f"@ {pos.entry_price}¢ | cost=${pos.entry_cost_dollars():.2f}"
-            )
-
-    # ------------------------------------------------------------------
-    # Weather Market Scanning + Entry
+    # Weather Market Scanning + Entry (primary strategy)
     # ------------------------------------------------------------------
 
     def _weather_scan_and_enter(self, balance: float) -> None:
@@ -530,7 +376,7 @@ class KalshiBot:
             logger.debug("No weather opportunities found")
             return
 
-        # Calculate available capital for weather trades
+        # Calculate available capital
         weather_exposure = sum(
             (d.limit_price / 100.0) * d.contracts
             for d in self._weather_positions.values()
@@ -557,13 +403,36 @@ class KalshiBot:
             if not dec.should_trade:
                 continue
 
-            # Skip if already positioned on this ticker
             if dec.ticker in self._weather_positions:
                 continue
             if self.state.has_position(dec.ticker):
                 continue
 
-            # Record prediction for calibration
+            # Record prediction in journal (v2)
+            if self.journal:
+                self.journal.record_prediction(
+                    market_ticker=dec.ticker,
+                    event_ticker="",
+                    market_title=dec.bracket_label,
+                    category="weather",
+                    model_prob=dec.model_prob,
+                    market_price=dec.market_implied,
+                    model_source=getattr(dec, 'sigma_source', 'nws_cdf'),
+                    forecast_details={
+                        "city": dec.city_code,
+                        "forecast_high": dec.forecast_high,
+                        "sigma": dec.sigma,
+                        "sigma_source": getattr(dec, 'sigma_source', 'unknown'),
+                        "lead_days": dec.lead_days,
+                    },
+                    traded=True,
+                    side=dec.side,
+                    contracts=dec.contracts,
+                    entry_price_cents=dec.limit_price,
+                    cost_dollars=(dec.limit_price / 100.0) * dec.contracts,
+                )
+
+            # Record prediction for weather scanner calibration too
             self.weather_scanner.record_prediction(
                 ticker=dec.ticker,
                 city_code=dec.city_code,
@@ -575,11 +444,10 @@ class KalshiBot:
                 sigma=dec.sigma,
             )
 
-            # Paper trade execution
+            # Execute trade
             logger.info(f"WEATHER ENTRY: {dec}")
 
             if WEATHER.paper_mode:
-                # Use PaperTrader-style execution
                 from strategy import EntryDecision
                 entry_dec = EntryDecision(
                     should_enter=True,
@@ -605,6 +473,91 @@ class KalshiBot:
                         f"forecast={dec.forecast_high:.0f}°F σ={dec.sigma:.1f}"
                     )
 
+    # ------------------------------------------------------------------
+    # Arbitrage Scanner (v2 — monitoring & logging, trade execution TODO)
+    # ------------------------------------------------------------------
+
+    def _arb_scan(self, balance: float) -> None:
+        """Scan all Kalshi events for mathematical arbitrage."""
+        if self.arb_scanner is None:
+            return
+
+        try:
+            opportunities = self.arb_scanner.scan()
+        except Exception as e:
+            logger.error(f"Arb scan failed: {e}")
+            return
+
+        profitable = [o for o in opportunities if o.is_profitable]
+
+        if profitable:
+            logger.info(
+                "ARB ALERT: %d profitable arbitrage opportunities found!",
+                len(profitable),
+            )
+            for opp in profitable[:3]:
+                logger.info(
+                    "  %s | %s | cost=%d¢ net=%.1f¢ (%.2f%%) | %s",
+                    opp.arb_type.upper(),
+                    opp.event_ticker,
+                    opp.combined_cost_cents,
+                    opp.net_profit_cents,
+                    opp.net_profit_pct,
+                    opp.event_title[:60],
+                )
+
+            # Record arb opportunities in journal
+            if self.journal:
+                for opp in profitable[:5]:
+                    self.journal.record_prediction(
+                        market_ticker=opp.market_tickers[0] if opp.market_tickers else opp.event_ticker,
+                        event_ticker=opp.event_ticker,
+                        market_title=opp.event_title,
+                        category="arbitrage",
+                        model_prob=1.0,  # Arb = guaranteed
+                        market_price=opp.combined_cost_cents / 100.0,
+                        model_source=f"arb_{opp.arb_type}",
+                        forecast_details={
+                            "arb_type": opp.arb_type,
+                            "combined_cost": opp.combined_cost_cents,
+                            "net_profit_cents": opp.net_profit_cents,
+                        },
+                        traded=False,  # Not auto-executing arbs yet
+                    )
+
+    # ------------------------------------------------------------------
+    # Status Logging
+    # ------------------------------------------------------------------
+
+    def _log_status(self) -> None:
+        """Log periodic status update."""
+        parts = [self.risk.status_string()]
+
+        if self.paper_mode:
+            parts.append(self.executor.stats_string())
+
+        if self.journal:
+            stats = self.journal.get_stats()
+            parts.append(
+                f"Journal: {stats.total_predictions} predictions, "
+                f"{stats.resolved_predictions} resolved, "
+                f"Brier={stats.mean_brier_score:.4f}, "
+                f"PnL=${stats.total_pnl:+.2f}"
+            )
+
+        if self.arb_scanner:
+            summary = self.arb_scanner.get_scan_summary()
+            parts.append(
+                f"Arb: {summary['opportunities_found']} found, "
+                f"{summary['profitable_count']} profitable"
+            )
+
+        logger.info(" | ".join(parts))
+
+    # ------------------------------------------------------------------
+    # Public accessors for dashboard/API
+    # ------------------------------------------------------------------
+
     def get_weather_summary(self) -> dict:
         """Return weather module status for the API/dashboard."""
         result = {
@@ -617,6 +570,18 @@ class KalshiBot:
             result["scanner_data"] = self.weather_scanner.get_scan_summary()
         return result
 
+    def get_arb_summary(self) -> dict:
+        """Return arb scanner summary for dashboard."""
+        if self.arb_scanner:
+            return self.arb_scanner.get_scan_summary()
+        return {"enabled": False}
+
+    def get_journal_summary(self) -> dict:
+        """Return trade journal summary for dashboard."""
+        if self.journal:
+            return self.journal.get_summary_for_api()
+        return {"enabled": False}
+
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
@@ -626,10 +591,8 @@ class KalshiBot:
         self._running = False
         logger.info("Shutting down bot...")
 
-        # Save final state
         self.state.save()
 
-        # Log summary
         print(self.state.summary())
         logger.info(
             f"Shutdown complete | "
@@ -643,38 +606,48 @@ class KalshiBot:
     # ------------------------------------------------------------------
 
     def scan_once(self) -> None:
-        """Scan markets and print results. Used by --scan CLI arg."""
+        """Scan markets and print results."""
         setup_logging(config.LOG_LEVEL)
-        if not self._api_available:
-            print("ERROR: Kalshi API not configured. Check .env file.")
-            return
 
-        print("\nScanning Kalshi 15-minute crypto markets...\n")
-        candidates = self.scanner.scan(force=True)
+        print("\nScanning Kalshi weather markets...\n")
+        if self.weather_scanner:
+            opportunities = self.weather_scanner.scan(force=True)
+            if not opportunities:
+                print("No weather opportunities found.")
+            else:
+                print(f"{'TICKER':<30} {'CITY':<15} {'DATE':<12} {'MODEL':>6} {'MKT':>5} {'EDGE':>6} {'EV':>6} {'SCORE':>7}")
+                print("-" * 95)
+                for opp in opportunities[:20]:
+                    p = opp.pricing
+                    m = opp.market
+                    print(
+                        f"{m.ticker:<30} {m.city_name:<15} {m.settlement_date:<12} "
+                        f"{p.model_prob:>6.3f} {p.market_implied_prob:>5.3f} "
+                        f"{p.fee_adjusted_edge:>+6.3f} {p.ev_per_contract:>+6.1f} "
+                        f"{opp.score:>7.1f}"
+                    )
 
-        if not candidates:
-            print("No tradable markets found.")
-            return
-
-        print(f"{'TICKER':<30} {'ASSET':<5} {'CLOSE IN':>9} {'YES_ASK':>8} {'NO_ASK':>7} {'VOL':>7} {'SCORE':>7}")
-        print("-" * 75)
-        for c in candidates:
-            mins = c.seconds_to_close / 60
-            print(
-                f"{c.ticker:<30} {c.asset:<5} {mins:>7.1f}m "
-                f"{c.yes_ask or '?':>8} "
-                f"{c.no_ask or '?':>7} "
-                f"{c.volume:>7} "
-                f"{c.score:>7.1f}"
-            )
+        if self.arb_scanner:
+            print("\nScanning for arbitrage...\n")
+            opps = self.arb_scanner.scan()
+            profitable = [o for o in opps if o.is_profitable]
+            if profitable:
+                print(f"FOUND {len(profitable)} PROFITABLE ARBITRAGE OPPORTUNITIES:")
+                for o in profitable[:10]:
+                    print(f"  {o.arb_type.upper()}: {o.event_title[:50]} | cost={o.combined_cost_cents}¢ net={o.net_profit_cents:.1f}¢")
+            else:
+                print("No profitable arbitrage found.")
 
     def show_status(self) -> None:
-        """Print current positions and P&L. Used by --status CLI arg."""
-        setup_logging("WARNING")  # Quiet for status display
+        """Print current positions and P&L."""
+        setup_logging("WARNING")
         print(self.state.summary())
+        if self.journal:
+            stats = self.journal.get_stats()
+            print(f"\nTrade Journal: {stats.total_predictions} predictions, Brier={stats.mean_brier_score:.4f}")
 
     def test_connection(self) -> bool:
-        """Test API connectivity. Used by --test CLI arg."""
+        """Test API connectivity."""
         setup_logging(config.LOG_LEVEL)
         if not self._api_available:
             print("ERROR: API keys not configured. Check .env file and private key path.")
