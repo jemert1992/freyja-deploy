@@ -438,18 +438,33 @@ def get_weather_dashboard_data():
                 if matched_fc:
                     high = matched_fc["high_f"]
                     sigma = city["sigma"] * sigma_inflation
-                    title_l = title.lower()
+                    # Strip markdown bold markers (**text**)
+                    clean_title = re.sub(r'\*\*', '', title)
+                    title_l = clean_title.lower()
                     low, up = None, None
 
-                    mb = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(?:below|lower)', title_l)
-                    if mb:
-                        up = float(mb.group(1))
-                    ma = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(?:above|higher)', title_l)
-                    if ma:
-                        low = float(ma.group(1))
-                    mr = re.search(r'(?:between\s+)?(\d+)\s*°?\s*f?\s+(?:and|to)\s+(\d+)', title_l)
-                    if mr:
-                        low, up = float(mr.group(1)), float(mr.group(2))
+                    # New Kalshi format: >N°, <N°, N-M°
+                    mg = re.search(r'[>≥]\s*(\d+)\s*°', clean_title)
+                    if mg:
+                        low = float(mg.group(1))
+                    ml = re.search(r'[<≤]\s*(\d+)\s*°', clean_title)
+                    if ml and low is None:
+                        up = float(ml.group(1))
+                    mr2 = re.search(r'(\d+)\s*[-–]\s*(\d+)\s*°', clean_title)
+                    if mr2 and low is None and up is None:
+                        low, up = float(mr2.group(1)), float(mr2.group(2))
+
+                    # Old Kalshi format: "X or above", "X or below", "between X and Y"
+                    if low is None and up is None:
+                        mb = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(?:below|lower)', title_l)
+                        if mb:
+                            up = float(mb.group(1))
+                        ma = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(?:above|higher)', title_l)
+                        if ma:
+                            low = float(ma.group(1))
+                        mr = re.search(r'(?:between\s+)?(\d+)\s*°?\s*f?\s+(?:and|to)\s+(\d+)', title_l)
+                        if mr:
+                            low, up = float(mr.group(1)), float(mr.group(2))
 
                     if low is None and up is not None:
                         model_prob = _norm_cdf((up - high) / sigma) if sigma > 0 else 0

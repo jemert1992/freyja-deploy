@@ -592,14 +592,40 @@ def _parse_bracket_bounds(title: str) -> Tuple[Optional[float], Optional[float]]
     """
     Parse bracket boundaries from Kalshi market title.
 
-    Examples:
-        "... 62°F or below"         → (None, 62)
-        "... between 63°F and 64°F" → (63, 64)
-        "... 65°F or above"         → (65, None)
+    Handles multiple Kalshi title formats:
+        Old:  "... 62°F or below"         → (None, 62)
+        Old:  "... between 63°F and 64°F" → (63, 64)
+        Old:  "... 65°F or above"         → (65, None)
+        New:  "... be >86° on ..."         → (86, None)   # greater than
+        New:  "... be <79° on ..."         → (None, 79)   # less than
+        New:  "... be 83-84° on ..."       → (83, 84)     # range
+        New:  "... be ≥86° on ..."         → (86, None)   # greater or equal
+        New:  "... be ≤79° on ..."         → (None, 79)   # less or equal
     """
     import re
 
-    title_lower = title.lower()
+    # Strip markdown bold markers (**text**) from title
+    clean = re.sub(r'\*\*', '', title)
+    title_lower = clean.lower()
+
+    # --- New Kalshi format: >N°, <N°, ≥N°, ≤N°, N-M° ---
+
+    # ">86°" or "≥86°" or "> 86°" — above/at-or-above
+    m = re.search(r'[>≥]\s*(\d+)\s*°', clean)
+    if m:
+        return (float(m.group(1)), None)
+
+    # "<79°" or "≤79°" or "< 79°" — below/at-or-below
+    m = re.search(r'[<≤]\s*(\d+)\s*°', clean)
+    if m:
+        return (None, float(m.group(1)))
+
+    # "83-84°" or "83–84°" (en-dash) — range bracket
+    m = re.search(r'(\d+)\s*[-–]\s*(\d+)\s*°', clean)
+    if m:
+        return (float(m.group(1)), float(m.group(2)))
+
+    # --- Old Kalshi format: "X or above", "X or below", "between X and Y" ---
 
     m = re.search(r'(\d+)\s*°?\s*f?\s+or\s+(?:below|lower|less)', title_lower)
     if m:
@@ -613,16 +639,18 @@ def _parse_bracket_bounds(title: str) -> Tuple[Optional[float], Optional[float]]
     if m:
         return (float(m.group(1)), float(m.group(2)))
 
-    nums = re.findall(r'(\d+)\s*°', title)
+    # --- Fallback: extract degree-marked numbers ---
+
+    nums = re.findall(r'(\d+)\s*°', clean)
     if len(nums) == 2:
         return (float(nums[0]), float(nums[1]))
     elif len(nums) == 1:
-        if 'below' in title_lower or 'lower' in title_lower or 'less' in title_lower:
+        if 'below' in title_lower or 'lower' in title_lower or 'less' in title_lower or '<' in clean:
             return (None, float(nums[0]))
-        elif 'above' in title_lower or 'higher' in title_lower or 'more' in title_lower:
+        elif 'above' in title_lower or 'higher' in title_lower or 'more' in title_lower or '>' in clean:
             return (float(nums[0]), None)
 
-    logger.warning(f"Could not parse bracket bounds from title: {title}")
+    logger.warning(f"Could not parse bracket bounds from title: {clean}")
     return (None, None)
 
 
