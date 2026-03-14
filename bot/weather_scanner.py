@@ -235,10 +235,19 @@ class WeatherScanner:
                 # Parse bracket market data
                 brackets_data = []
                 for m in brackets_raw:
-                    yes_bid = m.get("yes_bid")
-                    no_bid = m.get("no_bid")
-                    yes_ask = m.get("yes_ask")
-                    no_ask = m.get("no_ask")
+                    # Kalshi API returns prices in dollar strings (e.g. "0.0400")
+                    # Convert to integer cents for the pricing engine
+                    def _dollars_to_cents(val):
+                        if val is None:
+                            return None
+                        try:
+                            return int(round(float(val) * 100))
+                        except (ValueError, TypeError):
+                            return None
+                    yes_bid = _dollars_to_cents(m.get("yes_bid_dollars")) or m.get("yes_bid")
+                    no_bid = _dollars_to_cents(m.get("no_bid_dollars")) or m.get("no_bid")
+                    yes_ask = _dollars_to_cents(m.get("yes_ask_dollars")) or m.get("yes_ask")
+                    no_ask = _dollars_to_cents(m.get("no_ask_dollars")) or m.get("no_ask")
 
                     # Derive missing prices
                     if yes_ask is None and no_bid is not None:
@@ -272,10 +281,10 @@ class WeatherScanner:
                         status=raw.get("status", "open"),
                         close_time=self._parse_close_time(raw.get("close_time", "")),
                         settlement_date=date,
-                        yes_bid=raw.get("yes_bid"),
-                        yes_ask=raw.get("yes_ask"),
-                        no_bid=raw.get("no_bid"),
-                        no_ask=raw.get("no_ask"),
+                        yes_bid=_dollars_to_cents(raw.get("yes_bid_dollars")) or raw.get("yes_bid"),
+                        yes_ask=_dollars_to_cents(raw.get("yes_ask_dollars")) or raw.get("yes_ask"),
+                        no_bid=_dollars_to_cents(raw.get("no_bid_dollars")) or raw.get("no_bid"),
+                        no_ask=_dollars_to_cents(raw.get("no_ask_dollars")) or raw.get("no_ask"),
                         last_price=raw.get("last_price"),
                         volume=raw.get("volume", 0) or 0,
                         open_interest=raw.get("open_interest", 0) or 0,
