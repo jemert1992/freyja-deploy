@@ -1,7 +1,7 @@
 """
 sports_strategy.py — ESPN Live Data Client + Kalshi Sports Trading Logic
 
-Freyja Sports Module v1.0 — Momentum/Mean-Reversion Trading on NBA Spreads & Totals
+Freyja Sports Module v1.1 — Momentum/Mean-Reversion Trading on NBA + NCAA Spreads & Totals
 
 Strategy Overview:
   1. ESPN API provides free real-time play-by-play, scores, and win probability
@@ -30,16 +30,46 @@ from urllib.error import URLError, HTTPError
 
 logger = logging.getLogger(__name__)
 
-# ── ESPN API Endpoints ──────────────────────────────────
-ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
-ESPN_SUMMARY = "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={game_id}"
+# ── ESPN API Endpoints ─────────────────────────────────────────────
+ESPN_NBA_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+ESPN_NBA_SUMMARY = "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={game_id}"
+ESPN_NCAAB_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard"
+ESPN_NCAAB_SUMMARY = "https://site.web.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary?event={game_id}"
+# Backward compat aliases
+ESPN_SCOREBOARD = ESPN_NBA_SCOREBOARD
+ESPN_SUMMARY = ESPN_NBA_SUMMARY
 
-# ── Kalshi Sports Series ──────────────────────────────────
+# ── Kalshi Sports Series ───────────────────────────────────────────
 KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
+# NBA series
 SPREAD_SERIES = "KXNBASPREAD"
 TOTAL_SERIES = "KXNBATOTAL"
+# NCAA Men's Basketball series (March Madness + regular season)
+NCAA_SPREAD_SERIES = "KXNCAAMBSPREAD"
+NCAA_TOTAL_SERIES = "KXNCAAMBTOTAL"
+NCAA_GAME_SERIES = "KXNCAAMBGAME"
 
-# ── Strategy Parameters ──────────────────────────────────
+# ── League Configuration ───────────────────────────────────────────
+LEAGUE_CONFIG = {
+    "nba": {
+        "scoreboard_url": ESPN_NBA_SCOREBOARD,
+        "summary_url": ESPN_NBA_SUMMARY,
+        "spread_series": SPREAD_SERIES,
+        "total_series": TOTAL_SERIES,
+        "game_series": None,  # NBA doesn't use a single game series
+        "label": "NBA",
+    },
+    "ncaab": {
+        "scoreboard_url": ESPN_NCAAB_SCOREBOARD,
+        "summary_url": ESPN_NCAAB_SUMMARY,
+        "spread_series": NCAA_SPREAD_SERIES,
+        "total_series": NCAA_TOTAL_SERIES,
+        "game_series": NCAA_GAME_SERIES,
+        "label": "NCAAB",
+    },
+}
+
+# ── Strategy Parameters ────────────────────────────────────────────
 # These are tunable via the dashboard config
 
 @dataclass
@@ -48,48 +78,51 @@ class SportsConfig:
     enabled: bool = True
     paper_mode: bool = True
     
+    # Leagues to scan (paper mode = scan everything for learning)
+    leagues: list = field(default_factory=lambda: ["nba", "ncaab"])
+    
     # Scan timing
     scan_interval_seconds: float = 30.0  # Check every 30s during live games
     
     # Momentum detection
     momentum_window_plays: int = 8       # Look at last N plays for momentum
-    momentum_threshold: float = 0.08     # Win prob must shift >8% in window
-    scoring_run_threshold: int = 10      # Points scored by one team in a run
-    scoring_drought_minutes: float = 3.0 # Minutes without scoring = drought
+    momentum_threshold: float = 0.05     # Win prob must shift >5% in window (loosened for learning)
+    scoring_run_threshold: int = 8       # Points scored by one team in a run (lowered for NCAAB pace)
+    scoring_drought_minutes: float = 2.5 # Minutes without scoring = drought
     
-    # Entry criteria
-    min_edge: float = 0.05              # 5% minimum edge to enter
-    min_volume: int = 500               # Market must have 500+ contracts traded
-    min_game_elapsed_pct: float = 0.15  # Don't trade first 15% of game
-    max_game_elapsed_pct: float = 0.90  # Don't trade last 10% (too volatile)
+    # Entry criteria (loosened — paper mode is for learning, take more swings)
+    min_edge: float = 0.02              # 2% minimum edge (was 5% — too conservative for paper)
+    min_volume: int = 0                 # No volume filter in paper mode (college markets are thin)
+    min_game_elapsed_pct: float = 0.10  # Trade from 10% onward
+    max_game_elapsed_pct: float = 0.95  # Trade through 95% of game
     
-    # Position sizing (paper)
-    max_position_dollars: float = 25.0  # Max per trade
-    max_concurrent_sports: int = 6      # Max concurrent sports positions
-    kelly_fraction: float = 0.15        # Quarter-Kelly for sports
+    # Position sizing (paper — be aggressive for data collection)
+    max_position_dollars: float = 50.0  # Max per trade
+    max_concurrent_sports: int = 20     # Lots of March Madness games = lots of trades
+    kelly_fraction: float = 0.25        # More aggressive Kelly for paper
     
-    # Exit criteria
-    profit_target_pct: float = 0.20     # Take profit at 20%
-    stop_loss_pct: float = 0.40         # Stop loss at 40%
-    max_hold_minutes: float = 30.0      # Don't hold longer than 30 min
+    # Exit criteria (disabled — hold to settlement for learning)
+    profit_target_pct: float = 1.00     # Effectively disabled — let it ride
+    stop_loss_pct: float = 1.00         # No stop loss in paper mode
+    max_hold_minutes: float = 180.0     # Hold through full game
     
-    # Risk
-    max_total_exposure_dollars: float = 100.0
+    # Risk (generous for paper mode)
+    max_total_exposure_dollars: float = 500.0
 
 
-# ── Data Classes ───────────────────────────────────────────
+# ── Data Classes ───────────────────────────────────────────────────
 
 @dataclass
 class ESPNGame:
-    """Live NBA game data from ESPN."""
+    """Live game data from ESPN (NBA or NCAAB)."""
     game_id: str
     status: str              # "in", "pre", "post"
-    period: int              # Current quarter (1-4, 5+ for OT)
+    period: int              # Current quarter/half (1-4 NBA, 1-2 NCAAB, 3+ OT)
     clock: str               # Game clock "5:32"
-    home_team: str           # "LAL"
-    away_team: str           # "DEN"
-    home_team_full: str      # "Los Angeles Lakers"
-    away_team_full: str      # "Denver Nuggets"
+    home_team: str           # "LAL" or "DUKE"
+    away_team: str           # "DEN" or "UVA"
+    home_team_full: str      # "Los Angeles Lakers" or "Duke Blue Devils"
+    away_team_full: str      # "Denver Nuggets" or "Virginia Cavaliers"
     home_score: int
     away_score: int
     home_win_prob: float     # ESPN's win probability (0-1)
@@ -99,6 +132,7 @@ class ESPNGame:
     elapsed_pct: float       # 0.0 to 1.0 how far through the game
     venue: str = ""
     broadcast: str = ""
+    league: str = "nba"       # "nba" or "ncaab"
 
 @dataclass
 class MomentumSignal:
@@ -144,10 +178,10 @@ class SportsOpportunity:
     reason: str = ""
 
 
-# ── ESPN Client ───────────────────────────────────────────
+# ── ESPN Client ────────────────────────────────────────────────────
 
 class ESPNClient:
-    """Fetches real-time NBA data from ESPN's free API."""
+    """Fetches real-time NBA + NCAAB data from ESPN's free API."""
     
     def __init__(self):
         self._cache: Dict[str, Tuple[float, dict]] = {}  # game_id -> (timestamp, data)
@@ -155,28 +189,34 @@ class ESPNClient:
         self._win_prob_history: Dict[str, List[Tuple[float, float, float]]] = {}  # game_id -> [(time, home_wp, away_wp)]
         self._score_history: Dict[str, List[Tuple[float, int, int]]] = {}  # game_id -> [(time, home, away)]
     
-    def get_live_games(self) -> List[ESPNGame]:
-        """Fetch all live NBA games from ESPN scoreboard."""
-        try:
-            data = self._fetch_json(ESPN_SCOREBOARD)
-        except Exception as e:
-            logger.error(f"ESPN scoreboard fetch failed: {e}")
-            return []
+    def get_live_games(self, leagues: List[str] = None) -> List[ESPNGame]:
+        """Fetch all live games from ESPN scoreboard (NBA + NCAAB)."""
+        if leagues is None:
+            leagues = ["nba", "ncaab"]
         
-        games = []
-        events = data.get("events", [])
-        
-        for event in events:
+        all_games = []
+        for league in leagues:
+            cfg = LEAGUE_CONFIG.get(league)
+            if not cfg:
+                continue
             try:
-                game = self._parse_scoreboard_event(event)
-                if game:
-                    games.append(game)
+                data = self._fetch_json(cfg["scoreboard_url"])
             except Exception as e:
-                logger.debug(f"Failed to parse ESPN event: {e}")
+                logger.error(f"ESPN {cfg['label']} scoreboard fetch failed: {e}")
+                continue
+            
+            events = data.get("events", [])
+            for event in events:
+                try:
+                    game = self._parse_scoreboard_event(event, league=league)
+                    if game:
+                        all_games.append(game)
+                except Exception as e:
+                    logger.debug(f"Failed to parse ESPN {cfg['label']} event: {e}")
         
-        return games
+        return all_games
     
-    def get_game_details(self, game_id: str) -> Optional[dict]:
+    def get_game_details(self, game_id: str, league: str = "nba") -> Optional[dict]:
         """Fetch detailed game summary including play-by-play and win probability."""
         now = time.time()
         if game_id in self._cache:
@@ -185,15 +225,16 @@ class ESPNClient:
                 return cached_data
         
         try:
-            url = ESPN_SUMMARY.format(game_id=game_id)
+            cfg = LEAGUE_CONFIG.get(league, LEAGUE_CONFIG["nba"])
+            url = cfg["summary_url"].format(game_id=game_id)
             data = self._fetch_json(url)
             self._cache[game_id] = (now, data)
             return data
         except Exception as e:
-            logger.error(f"ESPN game details fetch failed for {game_id}: {e}")
+            logger.error(f"ESPN {league.upper()} game details fetch failed for {game_id}: {e}")
             return None
     
-    def get_win_probability(self, game_id: str) -> Optional[List[dict]]:
+    def get_win_probability(self, game_id: str, league: str = "nba") -> Optional[List[dict]]:
         """Extract win probability data from game details."""
         details = self.get_game_details(game_id)
         if not details:
@@ -241,7 +282,7 @@ class ESPNClient:
             "data_points": len(wp_hist),
         }
     
-    def _parse_scoreboard_event(self, event: dict) -> Optional[ESPNGame]:
+    def _parse_scoreboard_event(self, event: dict, league: str = "nba") -> Optional[ESPNGame]:
         """Parse a single ESPN scoreboard event into ESPNGame."""
         competitions = event.get("competitions", [{}])
         if not competitions:
@@ -311,7 +352,16 @@ class ESPNClient:
                     away_wp = float(at.get("winPercentage", (1.0 - home_wp) * 100)) / 100.0
         
         # Calculate elapsed percentage
-        # NBA game: 4 quarters × 12 min = 48 min regulation
+        # NBA: 4 quarters × 12 min = 48 min | NCAAB: 2 halves × 20 min = 40 min
+        if league == "ncaab":
+            period_minutes = 20.0   # College halves are 20 min
+            total_periods = 2
+            regulation_minutes = 40.0
+        else:
+            period_minutes = 12.0   # NBA quarters are 12 min
+            total_periods = 4
+            regulation_minutes = 48.0
+        
         elapsed_pct = 0.0
         if state == "in":
             try:
@@ -319,16 +369,16 @@ class ESPNClient:
                 if len(clock_parts) >= 2:
                     mins = float(clock_parts[0])
                     secs = float(clock_parts[1]) if len(clock_parts) > 1 else 0
-                    remaining_in_quarter = mins + secs / 60.0
+                    remaining_in_period = mins + secs / 60.0
                 else:
-                    remaining_in_quarter = float(clock_parts[0])
+                    remaining_in_period = float(clock_parts[0])
                 
-                quarters_complete = max(0, period - 1)
-                quarter_elapsed = 12.0 - remaining_in_quarter
-                total_elapsed = (quarters_complete * 12.0) + quarter_elapsed
-                elapsed_pct = min(1.0, total_elapsed / 48.0)
+                periods_complete = max(0, period - 1)
+                period_elapsed = period_minutes - remaining_in_period
+                total_elapsed = (periods_complete * period_minutes) + period_elapsed
+                elapsed_pct = min(1.0, total_elapsed / regulation_minutes)
             except (ValueError, IndexError):
-                elapsed_pct = (period - 1) / 4.0
+                elapsed_pct = (period - 1) / float(total_periods)
         elif state == "post":
             elapsed_pct = 1.0
         
@@ -360,6 +410,7 @@ class ESPNClient:
             elapsed_pct=elapsed_pct,
             venue=venue,
             broadcast=broadcast,
+            league=league,
         )
     
     def _fetch_json(self, url: str) -> dict:
@@ -379,7 +430,7 @@ class ESPNClient:
             raise
 
 
-# ── Momentum Detector ───────────────────────────────────────
+# ── Momentum Detector ──────────────────────────────────────────────
 
 class MomentumDetector:
     """Detects momentum swings in live NBA games."""
@@ -546,7 +597,7 @@ class MomentumDetector:
         return None
 
 
-# ── Kalshi Sports Market Client ─────────────────────────────────
+# ── Kalshi Sports Market Client ────────────────────────────────────
 
 class KalshiSportsClient:
     """Fetches and manages Kalshi sports market data."""
@@ -596,7 +647,7 @@ class KalshiSportsClient:
     def match_game_to_events(self, game: ESPNGame) -> Dict[str, str]:
         """Match an ESPN game to Kalshi event tickers.
         
-        Returns dict with keys 'spread' and 'total' mapping to event tickers.
+        Returns dict with keys 'spread', 'total', and optionally 'game' mapping to event tickers.
         """
         matches = {}
         
@@ -605,6 +656,7 @@ class KalshiSportsClient:
         date_str = now.strftime("%y%b%d").upper()  # "26MAR14"
         
         # Team abbreviation mapping (ESPN → Kalshi)
+        # NBA teams
         team_map = {
             "LAL": "LAL", "LAC": "LAC", "GSW": "GSW", "PHX": "PHX", "SAC": "SAC",
             "DEN": "DEN", "MIN": "MIN", "OKC": "OKC", "POR": "POR", "UTA": "UTA",
@@ -614,19 +666,27 @@ class KalshiSportsClient:
             "MEM": "MEM", "NOP": "NOP", "HOU": "HOU", "SAS": "SAS", "DAL": "DAL",
             "NO": "NOP",  # ESPN sometimes uses NO vs NOP
         }
+        # NCAA: ESPN abbreviations generally match Kalshi (DUKE, UVA, ARK, etc.)
+        # No special mapping needed — pass through directly
         
         away_abbr = team_map.get(game.away_team, game.away_team)
         home_abbr = team_map.get(game.home_team, game.home_team)
         
-        # Kalshi format: KXNBASPREAD-26MAR14DENLAL (away+home)
+        # Pick the right Kalshi series based on league
+        cfg = LEAGUE_CONFIG.get(game.league, LEAGUE_CONFIG["nba"])
+        spread_series = cfg["spread_series"]
+        total_series = cfg["total_series"]
+        game_series = cfg.get("game_series")
+        
+        # Kalshi format: {SERIES}-{YY}{MON}{DD}{AWAY}{HOME}
         game_suffix = f"{date_str}{away_abbr}{home_abbr}"
         
-        # Try exact match first
-        spread_ticker = f"{SPREAD_SERIES}-{game_suffix}"
-        total_ticker = f"{TOTAL_SERIES}-{game_suffix}"
+        matches["spread"] = f"{spread_series}-{game_suffix}"
+        matches["total"] = f"{total_series}-{game_suffix}"
         
-        matches["spread"] = spread_ticker
-        matches["total"] = total_ticker
+        # NCAA also has game winner markets
+        if game_series:
+            matches["game"] = f"{game_series}-{game_suffix}"
         
         return matches
     
@@ -668,7 +728,7 @@ class KalshiSportsClient:
             raise
 
 
-# ── Sports Trading Engine ───────────────────────────────────────
+# ── Sports Trading Engine ──────────────────────────────────────────
 
 class SportsTrader:
     """
@@ -691,469 +751,401 @@ class SportsTrader:
         self._trades_generated: int = 0
     
     def scan(self) -> List[SportsOpportunity]:
-        """
-        Full scan cycle:
-        1. Get live games from ESPN
-        2. Detect momentum signals
-        3. Match to Kalshi markets
-        4. Calculate edge and generate trade signals
-        """
-        self._scan_count += 1
+        """Main scan loop — find all current trading opportunities."""
         self._last_scan_time = time.time()
-        self._opportunities = []
+        self._scan_count += 1
         
-        # Step 1: Get live games
-        games = self.espn.get_live_games()
-        live_games = [g for g in games if g.status == "in"]
-        
-        if not live_games:
-            logger.debug("No live NBA games currently")
-            # Also track upcoming games for the dashboard
-            self._active_games = {g.game_id: g for g in games}
-            return []
-        
-        logger.info(f"Sports scan: {len(live_games)} live NBA games")
-        self._active_games = {g.game_id: g for g in games}
-        
-        # Step 2: For each live game, update history and detect momentum
-        all_signals = []
-        for game in live_games:
-            # Update history tracking
-            self.espn.update_history(game)
+        try:
+            # 1. Get live games
+            live_games = self.espn.get_live_games(leagues=self.config.leagues)
             
-            # Check game timing filters
-            if game.elapsed_pct < self.config.min_game_elapsed_pct:
-                logger.debug(f"Game {game.away_team}@{game.home_team} too early ({game.elapsed_pct:.0%})")
-                continue
-            if game.elapsed_pct > self.config.max_game_elapsed_pct:
-                logger.debug(f"Game {game.away_team}@{game.home_team} too late ({game.elapsed_pct:.0%})")
-                continue
+            if not live_games:
+                logger.debug("No live games found")
+                return []
             
-            # Detect momentum signals
-            signals = self.momentum.detect(game, self.espn)
-            if signals:
+            logger.info(f"Found {len(live_games)} live games")
+            
+            opportunities = []
+            
+            for game in live_games:
+                # Update history for momentum tracking
+                self.espn.update_history(game)
+                
+                # Check game timing filters
+                if game.elapsed_pct < self.config.min_game_elapsed_pct:
+                    continue
+                if game.elapsed_pct > self.config.max_game_elapsed_pct:
+                    continue
+                
+                # Detect momentum signals
+                signals = self.momentum.detect(game, self.espn)
+                
+                if not signals:
+                    continue
+                
                 self._signals_detected += len(signals)
-                for sig in signals:
-                    logger.info(
-                        f"MOMENTUM: {sig.signal_type} — {sig.details} "
-                        f"(magnitude={sig.magnitude:.2f})"
-                    )
-            all_signals.extend([(game, sig) for sig in signals])
-        
-        # Step 3: Match signals to Kalshi markets and find opportunities
-        for game, signal in all_signals:
-            opps = self._find_opportunities(game, signal)
-            self._opportunities.extend(opps)
-        
-        # Step 4: Score and filter opportunities
-        tradeable = self._score_opportunities(self._opportunities)
-        
-        logger.info(
-            f"Sports scan complete: {len(live_games)} games, "
-            f"{len(all_signals)} signals, {len(tradeable)} tradeable"
-        )
-        
-        return tradeable
+                
+                # Match game to Kalshi markets
+                event_tickers = self.kalshi.match_game_to_events(game)
+                
+                # Scan spread and total markets for each signal
+                for signal in signals:
+                    # Spread markets
+                    spread_ticker = event_tickers.get("spread")
+                    if spread_ticker:
+                        spread_markets = self.kalshi.get_markets_for_event(spread_ticker)
+                        for market in spread_markets:
+                            opp = self._evaluate_spread_opportunity(game, signal, market)
+                            if opp and opp.should_trade:
+                                opportunities.append(opp)
+                                self._trades_generated += 1
+                    
+                    # Total markets
+                    total_ticker = event_tickers.get("total")
+                    if total_ticker:
+                        total_markets = self.kalshi.get_markets_for_event(total_ticker)
+                        for market in total_markets:
+                            opp = self._evaluate_total_opportunity(game, signal, market)
+                            if opp and opp.should_trade:
+                                opportunities.append(opp)
+                                self._trades_generated += 1
+            
+            self._opportunities = opportunities
+            return opportunities
+            
+        except Exception as e:
+            logger.error(f"Sports scan error: {e}", exc_info=True)
+            return []
     
-    def _find_opportunities(self, game: ESPNGame, signal: MomentumSignal) -> List[SportsOpportunity]:
-        """Find Kalshi market opportunities based on a momentum signal."""
-        opportunities = []
-        
-        # Match game to Kalshi events
-        event_tickers = self.kalshi.match_game_to_events(game)
-        
-        # For spread markets
-        if signal.signal_type in ("win_prob_shift", "scoring_run"):
-            spread_event = event_tickers.get("spread")
-            if spread_event:
-                spread_opps = self._evaluate_spread_markets(game, signal, spread_event)
-                opportunities.extend(spread_opps)
-        
-        # For total markets (all signal types can affect totals)
-        total_event = event_tickers.get("total")
-        if total_event:
-            total_opps = self._evaluate_total_markets(game, signal, total_event)
-            opportunities.extend(total_opps)
-        
-        return opportunities
-    
-    def _evaluate_spread_markets(self, game: ESPNGame, signal: MomentumSignal, event_ticker: str) -> List[SportsOpportunity]:
-        """Find spread market opportunities based on signal."""
-        opportunities = []
-        
-        # Get markets for this event
-        markets = self.kalshi.get_markets_for_event(event_ticker)
-        if not markets:
-            # Try fetching from series directly
-            all_spread = self.kalshi.get_spread_markets()
-            # Filter by event ticker
-            markets = [m for m in all_spread if event_ticker.lower() in m.get("event_ticker", "").lower()]
-        
-        for market in markets:
-            opp = self._evaluate_single_market(
+    def _evaluate_spread_opportunity(
+        self, game: ESPNGame, signal: MomentumSignal, market: dict
+    ) -> Optional[SportsOpportunity]:
+        """Evaluate a spread market for trading opportunity."""
+        try:
+            ticker = market.get("ticker", "")
+            title = market.get("title", "")
+            status = market.get("status", "")
+            
+            if status != "open":
+                return None
+            
+            # Parse strike from title (e.g., "Lakers win by over 5.5?")
+            strike = self._parse_strike(title)
+            if strike is None:
+                return None
+            
+            # Get pricing
+            yes_bid = market.get("yes_bid", 0) / 100.0
+            yes_ask = market.get("yes_ask", 100) / 100.0
+            no_bid = market.get("no_bid", 0) / 100.0
+            no_ask = market.get("no_ask", 100) / 100.0
+            volume = market.get("volume", 0)
+            
+            # Volume filter
+            if volume < self.config.min_volume:
+                return None
+            
+            # Market mid-price
+            market_prob = (yes_bid + yes_ask) / 2.0
+            
+            # Model the probability
+            model_prob = self._model_spread_prob(game, signal, strike)
+            
+            edge = model_prob - market_prob
+            
+            # Determine trade direction
+            side = ""
+            limit_price = 0
+            
+            if edge >= self.config.min_edge:
+                side = "yes"
+                limit_price = int(yes_ask * 100)  # Lift the ask
+            elif -edge >= self.config.min_edge:
+                side = "no"
+                limit_price = int(no_ask * 100)
+            
+            if not side:
+                return None
+            
+            # Position sizing
+            contracts, ev = self._size_position(model_prob, market_prob, side, limit_price)
+            
+            return SportsOpportunity(
                 game=game,
                 signal=signal,
-                market=market,
                 market_type="spread",
+                market_ticker=ticker,
+                market_title=title,
+                strike=strike,
+                yes_bid=yes_bid,
+                yes_ask=yes_ask,
+                no_bid=no_bid,
+                no_ask=no_ask,
+                volume=volume,
+                model_prob=model_prob,
+                market_prob=market_prob,
+                edge=edge,
+                side=side,
+                contracts=contracts,
+                limit_price=limit_price,
+                ev_per_contract=ev,
+                should_trade=contracts > 0,
+                reason=f"{signal.signal_type} signal → {side} spread @ {limit_price}¢",
             )
-            if opp:
-                opportunities.append(opp)
-        
-        return opportunities
+        except Exception as e:
+            logger.debug(f"Error evaluating spread opportunity: {e}")
+            return None
     
-    def _evaluate_total_markets(self, game: ESPNGame, signal: MomentumSignal, event_ticker: str) -> List[SportsOpportunity]:
-        """Find total points market opportunities."""
-        opportunities = []
-        
-        markets = self.kalshi.get_markets_for_event(event_ticker)
-        if not markets:
-            all_total = self.kalshi.get_total_markets()
-            markets = [m for m in all_total if event_ticker.lower() in m.get("event_ticker", "").lower()]
-        
-        for market in markets:
-            opp = self._evaluate_single_market(
+    def _evaluate_total_opportunity(
+        self, game: ESPNGame, signal: MomentumSignal, market: dict
+    ) -> Optional[SportsOpportunity]:
+        """Evaluate a total points market for trading opportunity."""
+        try:
+            ticker = market.get("ticker", "")
+            title = market.get("title", "")
+            status = market.get("status", "")
+            
+            if status != "open":
+                return None
+            
+            strike = self._parse_strike(title)
+            if strike is None:
+                return None
+            
+            yes_bid = market.get("yes_bid", 0) / 100.0
+            yes_ask = market.get("yes_ask", 100) / 100.0
+            no_bid = market.get("no_bid", 0) / 100.0
+            no_ask = market.get("no_ask", 100) / 100.0
+            volume = market.get("volume", 0)
+            
+            if volume < self.config.min_volume:
+                return None
+            
+            market_prob = (yes_bid + yes_ask) / 2.0
+            model_prob = self._model_total_prob(game, signal, strike)
+            
+            edge = model_prob - market_prob
+            
+            side = ""
+            limit_price = 0
+            
+            if edge >= self.config.min_edge:
+                side = "yes"
+                limit_price = int(yes_ask * 100)
+            elif -edge >= self.config.min_edge:
+                side = "no"
+                limit_price = int(no_ask * 100)
+            
+            if not side:
+                return None
+            
+            contracts, ev = self._size_position(model_prob, market_prob, side, limit_price)
+            
+            return SportsOpportunity(
                 game=game,
                 signal=signal,
-                market=market,
                 market_type="total",
+                market_ticker=ticker,
+                market_title=title,
+                strike=strike,
+                yes_bid=yes_bid,
+                yes_ask=yes_ask,
+                no_bid=no_bid,
+                no_ask=no_ask,
+                volume=volume,
+                model_prob=model_prob,
+                market_prob=market_prob,
+                edge=edge,
+                side=side,
+                contracts=contracts,
+                limit_price=limit_price,
+                ev_per_contract=ev,
+                should_trade=contracts > 0,
+                reason=f"{signal.signal_type} signal → {side} total @ {limit_price}¢",
             )
-            if opp:
-                opportunities.append(opp)
-        
-        return opportunities
+        except Exception as e:
+            logger.debug(f"Error evaluating total opportunity: {e}")
+            return None
     
-    def _evaluate_single_market(self, game: ESPNGame, signal: MomentumSignal, market: dict, market_type: str) -> Optional[SportsOpportunity]:
-        """Evaluate a single Kalshi market for trading opportunity."""
-        yes_bid = market.get("yes_bid", 0) or 0
-        yes_ask = market.get("yes_ask", 0) or 0
-        no_bid = market.get("no_bid", 0) or 0
-        no_ask = market.get("no_ask", 0) or 0
-        volume = market.get("volume", 0) or 0
-        title = market.get("title", "")
-        ticker = market.get("ticker", "")
+    def _model_spread_prob(self, game: ESPNGame, signal: MomentumSignal, strike: float) -> float:
+        """
+        Model the probability that the home team wins by more than `strike` points.
         
-        # Filter by volume
-        if volume < self.config.min_volume:
-            return None
+        Uses current spread + momentum signal + time remaining.
+        """
+        current_spread = game.spread  # home_score - away_score (positive = home leading)
+        time_remaining = game.elapsed_pct  # how far through game
+        time_left = 1.0 - time_remaining
         
-        # Need valid prices
-        if yes_ask <= 0 or no_ask <= 0:
-            return None
-        
-        # Market midpoint
-        market_prob = (yes_bid + yes_ask) / 2.0 / 100.0
-        if market_prob <= 0 or market_prob >= 1:
-            return None
-        
-        # Extract strike from title
-        strike = self._extract_strike(title, market_type)
-        if strike is None:
-            return None
-        
-        # Model the probability based on current game state and signal
-        model_prob = self._model_probability(
-            game=game,
-            signal=signal,
-            market_type=market_type,
-            strike=strike,
-            market_prob=market_prob,
-        )
-        
-        if model_prob is None:
-            return None
-        
-        edge = model_prob - market_prob
-        
-        # Determine trade direction
-        if edge > self.config.min_edge:
-            side = "yes"
-            entry_price = yes_ask
-            market_prob_entry = yes_ask / 100.0
-        elif -edge > self.config.min_edge:  # Short the yes = buy no
-            side = "no"
-            entry_price = no_ask
-            model_prob = 1.0 - model_prob
-            market_prob_entry = no_ask / 100.0
-            edge = model_prob - market_prob_entry
+        # Expected scoring rate (pts per minute, per team)
+        # NBA: ~2.3 pts/min per team | NCAAB: ~1.8 pts/min per team (40 min game)
+        if game.league == "ncaab":
+            pts_per_min = 1.8
+            regulation_minutes = 40.0
         else:
-            return None  # No edge
+            pts_per_min = 2.3
+            regulation_minutes = 48.0
         
-        # Fee-adjusted edge (Kalshi 7% fee on winnings)
-        FEE = 0.07
-        ev_per_contract = (
-            model_prob * (100 - entry_price) * (1 - FEE)
-            - (1 - model_prob) * entry_price
-        )
+        minutes_left = time_left * regulation_minutes
         
-        if ev_per_contract <= 0:
-            return None
+        # Expected net pts remaining (home - away)
+        # Baseline: equal scoring
+        expected_remaining_spread = 0.0
         
-        # Kelly sizing
-        kelly_p = model_prob
-        kelly_q = 1 - kelly_p
-        kelly_b = (100 - entry_price) / entry_price * (1 - FEE)
-        kelly_fraction = (kelly_p * kelly_b - kelly_q) / kelly_b
-        kelly_fraction = max(0, kelly_fraction)
+        # Momentum adjustment: team with momentum scores slightly more
+        if signal.direction == "home":
+            momentum_boost = signal.magnitude * pts_per_min * 0.15 * minutes_left
+            expected_remaining_spread += momentum_boost
+        else:
+            momentum_boost = signal.magnitude * pts_per_min * 0.15 * minutes_left
+            expected_remaining_spread -= momentum_boost
         
-        position_size = min(
-            self.config.max_position_dollars,
-            kelly_fraction * self.config.kelly_fraction * self.config.max_position_dollars * 10,
-        )
-        contracts = max(1, int(position_size / (entry_price / 100.0)))
+        # Final expected spread
+        expected_final_spread = current_spread + expected_remaining_spread
         
-        should_trade = True
-        reason = f"edge={edge:.1%} ev={ev_per_contract:.1f}¢"
+        # Uncertainty grows with time remaining (more variance = more uncertainty)
+        # Approximate std dev: sqrt(minutes_left) * ~1.5 pts
+        import math
+        spread_std = max(1.0, math.sqrt(minutes_left) * 1.5)
         
-        return SportsOpportunity(
-            game=game,
-            signal=signal,
-            market_type=market_type,
-            market_ticker=ticker,
-            market_title=title,
-            strike=strike,
-            yes_bid=yes_bid,
-            yes_ask=yes_ask,
-            no_bid=no_bid,
-            no_ask=no_ask,
-            volume=volume,
-            model_prob=model_prob,
-            market_prob=market_prob,
-            edge=edge,
-            side=side,
-            contracts=contracts,
-            limit_price=entry_price,
-            ev_per_contract=ev_per_contract,
-            should_trade=should_trade,
-            reason=reason,
-        )
+        # P(home wins by > strike)
+        z_score = (expected_final_spread - strike) / spread_std
+        prob = 0.5 * (1 + math.erf(z_score / math.sqrt(2)))
+        
+        return max(0.01, min(0.99, prob))
     
-    def _extract_strike(self, title: str, market_type: str) -> Optional[float]:
-        """Extract the numeric strike from a market title."""
-        import re
-        
-        if market_type == "spread":
-            # "LAL wins by over 5.5" or "LAL -5.5"
-            m = re.search(r'(?:by\s+)?(?:over|more\s+than)?\s*([+-]?\d+(?:\.\d+)?)\s*(?:points?|pts?)?', title, re.IGNORECASE)
-            if m:
-                try:
-                    return float(m.group(1))
-                except ValueError:
-                    pass
-        elif market_type == "total":
-            # "Over 225.5 total points" or "225.5+"
-            m = re.search(r'(?:over|under|o/u)?\s*(\d+(?:\.\d+))\s*(?:total|points?|pts?)?', title, re.IGNORECASE)
-            if m:
-                try:
-                    return float(m.group(1))
-                except ValueError:
-                    pass
-        
-        return None
-    
-    def _model_probability(self, game: ESPNGame, signal: MomentumSignal, market_type: str, strike: float, market_prob: float) -> Optional[float]:
-        """Model the probability of a market outcome given current game state and momentum."""
-        
-        if market_type == "spread":
-            return self._model_spread_prob(game, signal, strike, market_prob)
-        elif market_type == "total":
-            return self._model_total_prob(game, signal, strike, market_prob)
-        
-        return None
-    
-    def _model_spread_prob(self, game: ESPNGame, signal: MomentumSignal, strike: float, market_prob: float) -> float:
+    def _model_total_prob(self, game: ESPNGame, signal: MomentumSignal, strike: float) -> float:
         """
-        Model spread probability using current game state + momentum.
+        Model the probability that the total points exceeds `strike`.
         
-        Strategy: Momentum signals create temporary overreactions in spread markets.
-        When team A goes on a run, the spread market overprices them temporarily.
-        We fade the momentum (bet against the run continuing at current prices).
-        """
-        current_spread = game.spread  # home - away (positive = home leading)
-        home_wp = game.home_win_prob
-        time_remaining = 1.0 - game.elapsed_pct
-        
-        # Base probability from win percentage (roughly correlates to spread cover)
-        # If home has 70% win prob and spread is +5.5 for home, estimate cover prob
-        # Simple heuristic: win prob > 0.5 means team is favored, spread likely covered
-        
-        if strike > 0:  # Positive strike = home team covers
-            # Estimate probability that home team wins by more than strike
-            # Scale based on current spread and time remaining
-            spread_margin = current_spread - strike
-            prob_base = 0.5 + (spread_margin * 0.03 * (1.0 + time_remaining))
-            
-            # Adjust for momentum signal
-            if signal.direction == "home" and signal.signal_type == "scoring_run":
-                # Home team just went on a run — market overprices them
-                # We fade: bet that the run ends (mean reversion)
-                momentum_fade = -signal.magnitude * 0.10
-                prob_base += momentum_fade
-            elif signal.direction == "away" and signal.signal_type == "scoring_run":
-                # Away team running — might flip spread
-                momentum_boost = signal.magnitude * 0.10
-                prob_base += momentum_boost
-            elif signal.signal_type == "win_prob_shift":
-                # Win prob shifted — adjust accordingly
-                prob_base += signal.win_prob_shift * 0.5
-        else:  # Negative strike = away team covers
-            spread_margin = -(current_spread - strike)
-            prob_base = 0.5 + (spread_margin * 0.03 * (1.0 + time_remaining))
-            
-            if signal.direction == "away" and signal.signal_type == "scoring_run":
-                momentum_fade = -signal.magnitude * 0.10
-                prob_base += momentum_fade
-            elif signal.direction == "home":
-                momentum_fade = signal.magnitude * 0.10
-                prob_base += momentum_fade
-        
-        # Blend with market probability (don't stray too far)
-        MAX_DEVIATION = 0.20
-        prob_final = market_prob + min(MAX_DEVIATION, max(-MAX_DEVIATION, prob_base - market_prob))
-        
-        return max(0.05, min(0.95, prob_final))
-    
-    def _model_total_prob(self, game: ESPNGame, signal: MomentumSignal, strike: float, market_prob: float) -> float:
-        """
-        Model total points probability.
-        
-        Strategy: Scoring bursts and droughts are mean-reverting in totals markets.
-        After a scoring burst, pace likely slows → fade the over.
-        After a drought, expect more scoring → fade the under.
+        Uses current total + expected remaining scoring + momentum.
         """
         current_total = game.total_points
-        time_remaining = 1.0 - game.elapsed_pct
+        time_left = 1.0 - game.elapsed_pct
         
-        # Project final total based on current pace
-        if game.elapsed_pct > 0.05:
-            pace = current_total / game.elapsed_pct
-            projected_total = pace  # Linear projection
+        # Expected scoring per team per minute
+        # NBA: ~2.3 pts/min | NCAAB: ~1.8 pts/min
+        if game.league == "ncaab":
+            pts_per_min_per_team = 1.8
+            regulation_minutes = 40.0
         else:
-            projected_total = 220.0  # NBA average
+            pts_per_min_per_team = 2.3
+            regulation_minutes = 48.0
         
-        # Base probability
-        total_margin = projected_total - strike
-        prob_base = 0.5 + (total_margin * 0.015)
+        minutes_left = time_left * regulation_minutes
+        expected_remaining = pts_per_min_per_team * 2 * minutes_left
         
-        # Adjust for momentum
+        # Momentum adjustment: scoring run = elevated pace
         if signal.signal_type == "scoring_run":
-            # Scoring burst — expect mean reversion (slower pace ahead)
-            # Fade the over if currently over-pacing
-            if projected_total > strike:
-                prob_base -= signal.magnitude * 0.08  # Fade the over
-            else:
-                prob_base += signal.magnitude * 0.08  # Help the over
-        
+            pace_boost = signal.magnitude * 0.2  # +20% max pace boost
+            expected_remaining *= (1.0 + pace_boost)
         elif signal.signal_type == "drought_break":
-            # After drought, scoring typically picks up
-            # If currently under-pacing strike, this helps the over
-            if projected_total < strike:
-                prob_base += signal.magnitude * 0.08
-            else:
-                prob_base -= signal.magnitude * 0.05
+            # Recent surge after drought
+            expected_remaining *= 1.1
         
-        elif signal.signal_type == "win_prob_shift":
-            # Big win prob shifts often accompany scoring (affects total)
-            scoring_adjustment = abs(signal.win_prob_shift) * 0.10
-            if projected_total > strike:
-                prob_base -= scoring_adjustment * 0.5  # Regression
-            else:
-                prob_base += scoring_adjustment * 0.5
+        expected_final_total = current_total + expected_remaining
         
-        # Blend with market
-        MAX_DEVIATION = 0.20
-        prob_final = market_prob + min(MAX_DEVIATION, max(-MAX_DEVIATION, prob_base - market_prob))
+        # Uncertainty
+        import math
+        total_std = max(2.0, math.sqrt(minutes_left) * 2.0)
         
-        return max(0.05, min(0.95, prob_final))
+        # P(total > strike)
+        z_score = (expected_final_total - strike) / total_std
+        prob = 0.5 * (1 + math.erf(z_score / math.sqrt(2)))
+        
+        return max(0.01, min(0.99, prob))
     
-    def _score_opportunities(self, opportunities: List[SportsOpportunity]) -> List[SportsOpportunity]:
-        """Score and rank opportunities, returning only tradeable ones."""
-        if not opportunities:
-            return []
+    def _parse_strike(self, title: str) -> Optional[float]:
+        """Parse the strike value from a market title."""
+        import re
+        # Match patterns like "5.5", "10", "220.5"
+        match = re.search(r'([\d]+\.?[\d]*)\s*(?:points?|pts|\.|\?|$)', title, re.IGNORECASE)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                pass
         
-        # Filter: must have positive edge
-        tradeable = [o for o in opportunities if o.should_trade and o.edge >= self.config.min_edge]
+        # Fallback: find any decimal number
+        numbers = re.findall(r'\b(\d+\.5|\d+\.0|\d+)\b', title)
+        if numbers:
+            # Take the most reasonable one (typically 5-250 range for sports)
+            candidates = [float(n) for n in numbers if 1 <= float(n) <= 300]
+            if candidates:
+                return candidates[-1]  # Take last number (usually the strike)
         
-        # Score by EV
-        def score(opp):
-            return opp.ev_per_contract * opp.contracts * min(1.0, opp.volume / 5000.0)
+        return None
+    
+    def _size_position(
+        self, model_prob: float, market_prob: float, side: str, limit_price: int
+    ) -> Tuple[int, float]:
+        """Kelly criterion position sizing."""
+        if side == "yes":
+            win_prob = model_prob
+            price = limit_price / 100.0
+        else:
+            win_prob = 1.0 - model_prob
+            price = limit_price / 100.0
         
-        tradeable.sort(key=score, reverse=True)
+        if price <= 0 or price >= 1:
+            return 0, 0.0
         
-        self._trades_generated += len(tradeable)
+        # Kelly fraction
+        b = (1.0 - price) / price  # Odds ratio
+        kelly = (win_prob * b - (1.0 - win_prob)) / b
         
-        # Cap at 3 opportunities per scan to avoid over-trading
-        return tradeable[:3]
+        if kelly <= 0:
+            return 0, 0.0
+        
+        # Fractional Kelly
+        f = kelly * self.config.kelly_fraction
+        
+        # Dollar amount
+        dollars = min(self.config.max_position_dollars, f * self.config.max_total_exposure_dollars)
+        
+        # Contracts (each contract costs `limit_price` cents)
+        if limit_price <= 0:
+            return 0, 0.0
+        
+        contracts = max(1, int(dollars / (limit_price / 100.0)))
+        
+        # EV per contract
+        if side == "yes":
+            ev = win_prob * (1.0 - price) - (1.0 - win_prob) * price
+        else:
+            ev = win_prob * (1.0 - price) - (1.0 - win_prob) * price
+        
+        return contracts, ev
     
     def get_scan_summary(self) -> dict:
-        """Return summary data for the API/dashboard."""
-        live_games = [g for g in self._active_games.values() if g.status == "in"]
-        upcoming_games = [g for g in self._active_games.values() if g.status == "pre"]
+        """Get a summary of current scan state."""
+        live_games = self.espn.get_live_games(leagues=self.config.leagues)
         
         games_data = []
-        for g in list(self._active_games.values())[:10]:
+        for g in live_games:
             games_data.append({
                 "game_id": g.game_id,
-                "status": g.status,
-                "away_team": g.away_team,
-                "home_team": g.home_team,
-                "away_team_full": g.away_team_full,
-                "home_team_full": g.home_team_full,
-                "away_score": g.away_score,
-                "home_score": g.home_score,
+                "matchup": f"{g.away_team} @ {g.home_team}",
+                "score": f"{g.away_score}-{g.home_score}",
                 "period": g.period,
                 "clock": g.clock,
-                "home_win_prob": round(g.home_win_prob, 3),
-                "away_win_prob": round(g.away_win_prob, 3),
-                "spread": g.spread,
-                "total_points": g.total_points,
-                "elapsed_pct": round(g.elapsed_pct, 3),
-                "venue": g.venue,
-                "broadcast": g.broadcast,
-            })
-        
-        opps_data = []
-        for o in self._opportunities[:10]:
-            opps_data.append({
-                "ticker": o.market_ticker,
-                "title": o.market_title,
-                "type": o.market_type,
-                "game": f"{o.game.away_team}@{o.game.home_team}",
-                "signal": o.signal.signal_type,
-                "signal_details": o.signal.details,
-                "edge": round(o.edge, 4),
-                "model_prob": round(o.model_prob, 4),
-                "market_prob": round(o.market_prob, 4),
-                "side": o.side,
-                "contracts": o.contracts,
-                "volume": o.volume,
-                "should_trade": o.should_trade,
+                "elapsed_pct": g.elapsed_pct,
+                "home_wp": g.home_win_prob,
+                "status": g.status,
+                "league": g.league,
             })
         
         return {
-            "enabled": self.config.enabled,
-            "paper_mode": self.config.paper_mode,
             "scan_count": self._scan_count,
             "last_scan": self._last_scan_time,
             "signals_detected": self._signals_detected,
             "trades_generated": self._trades_generated,
+            "active_opportunities": len(self._opportunities),
             "live_games": len(live_games),
-            "upcoming_games": len(upcoming_games),
-            "total_games": len(self._active_games),
-            "games": games_data,
-            "opportunities": opps_data,
-            "config": {
-                "scan_interval": self.config.scan_interval_seconds,
-                "momentum_threshold": self.config.momentum_threshold,
-                "min_edge": self.config.min_edge,
-                "min_volume": self.config.min_volume,
-                "max_position_dollars": self.config.max_position_dollars,
-                "kelly_fraction": self.config.kelly_fraction,
-                "profit_target_pct": self.config.profit_target_pct,
-                "stop_loss_pct": self.config.stop_loss_pct,
-            },
+            "games_data": games_data,
         }
 
 
-# ── Module-level config instance ───────────────────────────────
+# ── Module-level config instance ───────────────────────────────────
 
 SPORTS = SportsConfig()
