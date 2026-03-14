@@ -21,6 +21,7 @@ API Endpoints:
     POST /api/config   — Update .env config & restart
     GET  /api/balance  — Balance from state.json
     GET  /api/weather  — Weather dashboard data (NWS + ECMWF + markets)
+    GET  /api/sports   — Sports module data (ESPN + Kalshi live games)
     GET  /api/arb      — Arb scanner results (v2)
     GET  /api/journal  — Trade journal + calibration stats (v2)
 """
@@ -36,7 +37,7 @@ from urllib.parse import urlparse, parse_qs
 import urllib.request
 import urllib.error
 
-# ── Configuration ──────────────────────────────────────────────────────
+# ── Configuration ──────────────────────────────────────────────
 
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8080
@@ -64,7 +65,7 @@ STATIC_TYPES = {
     '.ico':  'image/x-icon',
 }
 
-# ── Helpers ──────────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────
 
 def read_env() -> dict:
     """Parse .env file into a dict, ignoring comments and blanks."""
@@ -246,7 +247,7 @@ def get_balance() -> dict:
     }
 
 
-# ── Weather Helpers ──────────────────────────────────────────────────────
+# ── Weather Helpers ────────────────────────────────────────────────
 
 import math
 import re
@@ -498,7 +499,7 @@ def get_weather_dashboard_data():
     return result
 
 
-# ── HTTP Handler ────────────────────────────────────────────────────────
+# ── HTTP Handler ───────────────────────────────────────────────────
 
 class FreyjaHandler(BaseHTTPRequestHandler):
 
@@ -540,14 +541,14 @@ class FreyjaHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return self.rfile.read(length) if length > 0 else b""
 
-    # ── OPTIONS (preflight) ────────────────────────────────────────
+    # ── OPTIONS (preflight) ──────────────────────────────────
 
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_cors_headers()
         self.end_headers()
 
-    # ── Static file serving ────────────────────────────────────────────
+    # ── Static file serving ───────────────────────────────────────
 
     def serve_static(self, path):
         """Serve dashboard static files. Returns True if handled."""
@@ -582,7 +583,7 @@ class FreyjaHandler(BaseHTTPRequestHandler):
         except Exception:
             return False
 
-    # ── GET routes ─────────────────────────────────────────────────────
+    # ── GET routes ───────────────────────────────────────────────────
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -630,6 +631,11 @@ class FreyjaHandler(BaseHTTPRequestHandler):
                     self.send_json({"city": city_code, "markets": markets})
                 except Exception as e:
                     self.send_json({"error": str(e)}, 500)
+            elif api_path == '/api/sports':
+                try:
+                    self.send_json(get_sports_data())
+                except Exception as e:
+                    self.send_json({"error": str(e)}, 500)
             elif api_path == '/api/arb':
                 try:
                     self.send_json(get_arb_scan_data())
@@ -654,7 +660,7 @@ class FreyjaHandler(BaseHTTPRequestHandler):
 
         self.send_json({"error": "Not found"}, 404)
 
-    # ── POST routes ─────────────────────────────────────────────────────
+    # ── POST routes ───────────────────────────────────────────────────
 
     def do_POST(self):
         path = urlparse(self.path).path.rstrip("/")
@@ -691,7 +697,139 @@ class FreyjaHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Not found"}, 404)
 
 
-# ── Arb Scanner Helpers (v2) ─────────────────────────────────────────────────
+# ── Arb Scanner Helpers (v2) ───────────────────────────────────────────────────
+
+# ── Sports Data ────────────────────────────────────────────────
+
+def get_sports_data():
+    """Fetch live NBA game data from ESPN + Kalshi sports markets."""
+    result = {
+        "ts": time.time(),
+        "live_games": [],
+        "all_games": [],
+        "markets": {"spread": [], "total": []},
+        "module_enabled": True,
+    }
+
+    # Step 1: Get live scoreboard from ESPN
+    try:
+        espn_url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+        req = urllib.request.Request(espn_url, headers={
+            "User-Agent": "Freyja-Sports/1.0",
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            scoreboard = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        result["espn_error"] = str(e)
+        return result
+
+    events = scoreboard.get("events", [])
+
+    for event in events:
+        try:
+            competitions = event.get("competitions", [{}])
+            if not competitions:
+                continue
+            comp = competitions[0]
+
+            status_obj = event.get("status", {})
+            status_type = status_obj.get("type", {})
+            state = status_type.get("state", "pre")
+            period = status_obj.get("period", 0)
+            clock = status_obj.get("displayClock", "0:00")
+            status_detail = status_type.get("shortDetail", "")
+
+            competitors = comp.get("competitors", [])
+            if len(competitors) < 2:
+                continue
+
+            home = away = None
+            for c in competitors:
+                if c.get("homeAway") == "home":
+                    home = c
+                else:
+                    away = c
+
+            if not home or not away:
+                continue
+
+            home_score = int(home.get("score", 0))
+            away_score = int(away.get("score", 0))
+            home_abbr = home.get("team", {}).get("abbreviation", "???")
+            away_abbr = away.get("team", {}).get("abbreviation", "???")
+            home_name = home.get("team", {}).get("displayName", home_abbr)
+            away_name = away.get("team", {}).get("displayName", away_abbr)
+            home_logo = home.get("team", {}).get("logo", "")
+            away_logo = away.get("team", {}).get("logo", "")
+            home_record = home.get("records", [{}])[0].get("summary", "") if home.get("records") else ""
+            away_record = away.get("records", [{}])[0].get("summary", "") if away.get("records") else ""
+
+            # Win probability from odds or predictor
+            home_wp = 0.5
+            odds = comp.get("odds", [])
+            if odds:
+                for o in odds:
+                    ht = o.get("homeTeamOdds", {})
+                    if "winPercentage" in ht:
+                        home_wp = float(ht["winPercentage"]) / 100.0
+
+            game_data = {
+                "game_id": event.get("id", ""),
+                "status": state,
+                "status_detail": status_detail,
+                "period": period,
+                "clock": clock,
+                "home_team": home_abbr,
+                "away_team": away_abbr,
+                "home_name": home_name,
+                "away_name": away_name,
+                "home_logo": home_logo,
+                "away_logo": away_logo,
+                "home_record": home_record,
+                "away_record": away_record,
+                "home_score": home_score,
+                "away_score": away_score,
+                "total_points": home_score + away_score,
+                "spread": home_score - away_score,
+                "home_win_prob": round(home_wp, 3),
+                "venue": comp.get("venue", {}).get("fullName", ""),
+            }
+
+            result["all_games"].append(game_data)
+            if state == "in":
+                result["live_games"].append(game_data)
+        except Exception:
+            continue
+
+    # Step 2: Get Kalshi spread/total markets for today's games
+    for series, key in [("KXNBASPREAD", "spread"), ("KXNBATOTAL", "total")]:
+        try:
+            mkts_url = f"{KALSHI_PUBLIC_API}/markets?series_ticker={series}&status=open&limit=100"
+            mkts_data = _kalshi_public_get(mkts_url)
+            for m in mkts_data.get("markets", []):
+                vol = m.get("volume", 0)
+                result["markets"][key].append({
+                    "ticker": m.get("ticker", ""),
+                    "title": m.get("title", ""),
+                    "yes_bid": m.get("yes_bid", 0),
+                    "yes_ask": m.get("yes_ask", 0),
+                    "no_bid": m.get("no_bid", 0),
+                    "no_ask": m.get("no_ask", 0),
+                    "volume": vol,
+                    "open_interest": m.get("open_interest", 0),
+                    "last_price": m.get("last_price", 0),
+                })
+        except Exception as e:
+            result[f"{key}_error"] = str(e)
+
+    result["game_count"] = len(result["all_games"])
+    result["live_count"] = len(result["live_games"])
+    result["spread_markets"] = len(result["markets"]["spread"])
+    result["total_markets"] = len(result["markets"]["total"])
+
+    return result
+
 
 def get_arb_scan_data():
     """Run a quick arb scan using the Kalshi public API and return results."""
@@ -786,7 +924,7 @@ def get_arb_scan_data():
     return result
 
 
-# ── Trade Journal Helpers (v2) ───────────────────────────────────────────────
+# ── Trade Journal Helpers (v2) ──────────────────────────────────────────────────
 
 JOURNAL_FILE = BOT_DIR / "trade_journal.json"
 CALIBRATION_FILE = BOT_DIR / "calibration_stats.json"
@@ -856,7 +994,7 @@ def get_journal_data():
     return result
 
 
-# ── Main ────────────────────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     server = HTTPServer((LISTEN_HOST, LISTEN_PORT), FreyjaHandler)
