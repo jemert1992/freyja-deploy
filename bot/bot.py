@@ -53,6 +53,16 @@ except ImportError:
     _ARB_AVAILABLE = False
     ArbScanner = None
 
+# Sports module (v2.1)
+try:
+    from sports_strategy import SPORTS, SportsConfig
+    from sports_scanner import SportsScanner, SportsTrade
+    _SPORTS_AVAILABLE = True
+except ImportError:
+    _SPORTS_AVAILABLE = False
+    SPORTS = None
+    SportsScanner = None
+
 # Trade journal (v2)
 try:
     from trade_journal import TradeJournal
@@ -102,14 +112,14 @@ def setup_logging(level: str = "INFO") -> None:
 # ---------------------------------------------------------------------------
 
 BANNER = r"""
- ███████╗██████╗ ███████╗██╗   ██╗     ██╗ █████╗     ██╗   ██╗██████╗
+ ███████╣██████╗ ███████╣██╗   ██╗     ██╗ █████╗     ██╗   ██╗██████╗
  ██╔════╝██╔══██╗██╔════╝╚██╗ ██╔╝     ██║██╔══██╗    ██║   ██║╚════██╗
  █████╗  ██████╔╝█████╗   ╚████╔╝      ██║███████║    ██║   ██║ █████╔╝
  ██╔══╝  ██╔══██╗██╔══╝    ╚██╔╝  ██   ██║██╔══██║    ╚██╗ ██╔╝██╔═══╝
  ██║     ██║  ██║███████╗   ██║   ╚█████╔╝██║  ██║     ╚████╔╝ ███████╗
  ╚═╝     ╚═╝  ╚═╝╚══════╝   ╚═╝    ╚════╝ ╚═╝  ╚═╝      ╚═══╝  ╚══════╝
- Freyja Quant Engine v2 — Weather + Arb Scanner + Trade Journal
- ECMWF Ensemble | Fee-Aware Kelly | Brier Score Gate
+ Freyja Quant Engine v2.1 — Weather + Sports + Arb + Journal
+ ECMWF Ensemble | ESPN Live Momentum | Fee-Aware Kelly
 """
 
 
@@ -127,6 +137,12 @@ def print_startup_banner(mode: str, balance: Optional[float]) -> None:
         print(f"  Weather Edge  : {WEATHER.min_edge:.0%} min / Kelly {WEATHER.kelly_fraction:.0%}")
     else:
         print(f"  Weather Module: DISABLED")
+    if _SPORTS_AVAILABLE and SPORTS and SPORTS.enabled:
+        print(f"  Sports Module : ENABLED (NBA spread/total momentum)")
+        print(f"  Sports Mode   : {'PAPER' if SPORTS.paper_mode else 'LIVE'}")
+        print(f"  Sports Edge   : {SPORTS.min_edge:.0%} min / Kelly {SPORTS.kelly_fraction:.0%}")
+    else:
+        print(f"  Sports Module : DISABLED")
     if _ARB_AVAILABLE:
         print(f"  Arb Scanner   : ENABLED (scan every {ARB_SCAN_INTERVAL/60:.0f} min)")
     else:
@@ -170,6 +186,11 @@ class KalshiBot:
         self.arb_scanner = None
         self._last_arb_scan = 0.0
 
+        # Sports module (v2.1)
+        self.sports_scanner = None
+        self._last_sports_scan = 0.0
+        self._sports_positions: dict = {}
+
         # Trade journal (v2)
         self.journal = None
         if _JOURNAL_AVAILABLE:
@@ -206,6 +227,15 @@ class KalshiBot:
             except Exception as e:
                 logger.warning(f"Weather module init failed: {e}")
                 self.weather_scanner = None
+
+        # Sports scanner (v2.1) — ESPN + Kalshi sports
+        if _SPORTS_AVAILABLE and SPORTS and SPORTS.enabled:
+            try:
+                self.sports_scanner = SportsScanner()
+                logger.info("Sports module ENABLED — NBA spread/total momentum")
+            except Exception as e:
+                logger.warning(f"Sports module init failed: {e}")
+                self.sports_scanner = None
 
         # Arb scanner (v2) — uses public API, no auth needed
         if _ARB_AVAILABLE:
@@ -318,7 +348,17 @@ class KalshiBot:
                     logger.error(f"Weather scan error: {e}", exc_info=True)
                 self._last_weather_scan = now
 
-        # --- 7. Arb scanner (v2 — runs less frequently) ---
+        # --- 7. Sports market scan (v2.1 — NBA momentum) ---
+        if self.sports_scanner is not None:
+            sports_interval = SPORTS.scan_interval_seconds if SPORTS else 30.0
+            if (now - self._last_sports_scan) >= sports_interval:
+                try:
+                    self._sports_scan_and_enter(balance or 0.0)
+                except Exception as e:
+                    logger.error(f"Sports scan error: {e}", exc_info=True)
+                self._last_sports_scan = now
+
+        # --- 8. Arb scanner (v2 — runs less frequently) ---
         if self.arb_scanner is not None:
             if (now - self._last_arb_scan) >= ARB_SCAN_INTERVAL:
                 try:
@@ -327,7 +367,7 @@ class KalshiBot:
                     logger.error(f"Arb scan error: {e}", exc_info=True)
                 self._last_arb_scan = now
 
-        # --- 8. Periodic status log ---
+        # --- 9. Periodic status log ---
         if (now - self._last_status_log) >= 60.0:
             self._log_status()
             self._last_status_log = now
@@ -474,6 +514,103 @@ class KalshiBot:
                     )
 
     # ------------------------------------------------------------------
+    # Sports Market Scanning + Entry (v2.1)
+    # ------------------------------------------------------------------
+
+    def _sports_scan_and_enter(self, balance: float) -> None:
+        """Scan live NBA games for momentum trades."""
+        if self.sports_scanner is None:
+            return
+
+        try:
+            trades = self.sports_scanner.scan()
+        except Exception as e:
+            logger.error(f"Sports scan failed: {e}")
+            return
+
+        if not trades:
+            return
+
+        # Calculate available capital for sports
+        sports_exposure = sum(
+            (t.limit_price / 100.0) * t.contracts
+            for t in self._sports_positions.values()
+        )
+        available = min(
+            balance - config.RISK.min_balance_dollars,
+            SPORTS.max_total_exposure_dollars - sports_exposure,
+        )
+
+        if available <= 0:
+            logger.debug("No available capital for sports trades")
+            return
+
+        for trade in trades:
+            if trade.ticker in self._sports_positions:
+                continue
+            if self.state.has_position(trade.ticker):
+                continue
+
+            trade_cost = (trade.limit_price / 100.0) * trade.contracts
+            if trade_cost > available:
+                continue
+
+            # Record prediction in journal
+            if self.journal:
+                self.journal.record_prediction(
+                    market_ticker=trade.ticker,
+                    event_ticker="",
+                    market_title=f"{trade.game_label} {trade.market_type}",
+                    category="sports",
+                    model_prob=trade.model_prob,
+                    market_price=trade.market_prob,
+                    model_source=f"sports_{trade.signal_type}",
+                    forecast_details={
+                        "game": trade.game_label,
+                        "market_type": trade.market_type,
+                        "signal": trade.signal_type,
+                        "signal_details": trade.signal_details,
+                        "volume": trade.volume,
+                    },
+                    traded=True,
+                    side=trade.side,
+                    contracts=trade.contracts,
+                    entry_price_cents=trade.limit_price,
+                    cost_dollars=trade_cost,
+                )
+
+            # Execute paper trade
+            logger.info(f"SPORTS ENTRY: {trade}")
+
+            if SPORTS.paper_mode:
+                from strategy import EntryDecision
+                entry_dec = EntryDecision(
+                    should_enter=True,
+                    side=trade.side,
+                    contracts=trade.contracts,
+                    limit_price=trade.limit_price,
+                    model_prob=trade.model_prob,
+                    market_implied_prob=trade.market_prob,
+                    edge=trade.edge,
+                    ev_per_contract=trade.ev_per_contract,
+                    kelly_fraction=SPORTS.kelly_fraction,
+                )
+                pos = self.executor.enter_position(
+                    ticker=trade.ticker,
+                    decision=entry_dec,
+                )
+                if pos:
+                    self._sports_positions[trade.ticker] = trade
+                    self.sports_scanner.record_entry(trade)
+                    available -= trade_cost
+                    logger.info(
+                        f"Sports position opened: {pos.ticker} | "
+                        f"{pos.side.upper()} x{pos.contracts} @ {pos.entry_price}¢ | "
+                        f"{trade.game_label} {trade.market_type} | "
+                        f"edge={trade.edge:.1%} signal={trade.signal_type}"
+                    )
+
+    # ------------------------------------------------------------------
     # Arbitrage Scanner (v2 — monitoring & logging, trade execution TODO)
     # ------------------------------------------------------------------
 
@@ -569,6 +706,12 @@ class KalshiBot:
         if self.weather_scanner:
             result["scanner_data"] = self.weather_scanner.get_scan_summary()
         return result
+
+    def get_sports_summary(self) -> dict:
+        """Return sports module status for the API/dashboard."""
+        if self.sports_scanner:
+            return self.sports_scanner.get_scan_summary()
+        return {"enabled": False}
 
     def get_arb_summary(self) -> dict:
         """Return arb scanner summary for dashboard."""
