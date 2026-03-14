@@ -1,373 +1,1321 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FREYJA QUANT ENGINE v2</title>
-    <link rel="stylesheet" href="./style.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>◆</text></svg>">
-    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FREYJA QUANT ENGINE v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* ===== RESET & BASE ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #0d0d14;
+  --bg-tertiary: #111118;
+  --bg-card: #0f0f17;
+  --bg-card-hover: #141420;
+  --border: #1a2a1a;
+  --border-bright: #2a4a2a;
+  --green: #00ff41;
+  --green-dim: #00cc33;
+  --green-dark: #1a3a1a;
+  --green-glow: rgba(0, 255, 65, 0.3);
+  --cyan: #00d4ff;
+  --cyan-dim: #0099bb;
+  --cyan-glow: rgba(0, 212, 255, 0.2);
+  --amber: #ffb300;
+  --amber-dim: #cc8f00;
+  --red: #ff1744;
+  --red-dim: #cc1236;
+  --red-glow: rgba(255, 23, 68, 0.2);
+  --text-primary: #c0c0c0;
+  --text-dim: #606070;
+  --text-muted: #404050;
+  --font-mono: 'JetBrains Mono', 'Space Mono', 'Courier New', monospace;
+  --radius: 4px;
+  --transition: 150ms ease;
+}
+
+html { font-size: 14px; }
+
+body {
+  font-family: var(--font-mono);
+  background: var(--bg-primary);
+  background-image:
+    linear-gradient(rgba(0,255,65,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,65,0.015) 1px, transparent 1px);
+  background-size: 50px 50px;
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+a { color: var(--green); text-decoration: none; }
+a:hover { color: var(--green-dim); }
+
+button {
+  font-family: var(--font-mono);
+  cursor: pointer;
+  border: none;
+  outline: none;
+}
+
+input, textarea, select {
+  font-family: var(--font-mono);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  outline: none;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--green-dim);
+}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+
+/* ===== LAYOUT ===== */
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+
+/* ===== HEADER ===== */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 56px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-text {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--green);
+  text-shadow: 0 0 20px var(--green-glow);
+  letter-spacing: 2px;
+}
+
+.logo-version {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.status-dot.active { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.warning { background: var(--amber); }
+.status-dot.error { background: var(--red); }
+
+.latency-badge {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}
+
+/* ===== MAIN CONTENT ===== */
+.main {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 0;
+}
+
+/* ===== SIDEBAR ===== */
+.sidebar {
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 16px 0;
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+}
+
+.sidebar-section {
+  margin-bottom: 24px;
+}
+
+.sidebar-label {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  padding: 0 16px;
+  margin-bottom: 8px;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  transition: all var(--transition);
+  border-left: 2px solid transparent;
+}
+
+.sidebar-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.sidebar-item.active {
+  color: var(--green);
+  border-left-color: var(--green);
+  background: var(--green-dark);
+}
+
+.sidebar-item .icon {
+  width: 16px;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+/* ===== CONTENT AREA ===== */
+.content {
+  padding: 24px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+}
+
+.page { display: none; }
+.page.active { display: block; }
+
+/* ===== CARDS ===== */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  transition: border-color var(--transition);
+}
+
+.card:hover {
+  border-color: var(--border-bright);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-title {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+/* ===== METRICS GRID ===== */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.metric-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  transition: all var(--transition);
+}
+
+.metric-card:hover {
+  border-color: var(--border-bright);
+  background: var(--bg-card-hover);
+}
+
+.metric-label {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: 6px;
+}
+
+.metric-value {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.metric-value.positive { color: var(--green); }
+.metric-value.negative { color: var(--red); }
+.metric-value.neutral { color: var(--cyan); }
+
+.metric-sub {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+/* ===== TABLES ===== */
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+thead th {
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  border-bottom: 1px solid var(--border);
+}
+
+tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+tbody tr:hover td {
+  background: var(--bg-secondary);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.td-mono { font-family: var(--font-mono); }
+.td-pos { color: var(--green); }
+.td-neg { color: var(--red); }
+.td-neutral { color: var(--cyan); }
+.td-dim { color: var(--text-dim); }
+
+/* ===== BADGES ===== */
+.badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 2px;
+  font-size: 0.65rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.badge-green { background: rgba(0,255,65,0.1); color: var(--green); border: 1px solid rgba(0,255,65,0.2); }
+.badge-red { background: rgba(255,23,68,0.1); color: var(--red); border: 1px solid rgba(255,23,68,0.2); }
+.badge-amber { background: rgba(255,179,0,0.1); color: var(--amber); border: 1px solid rgba(255,179,0,0.2); }
+.badge-cyan { background: rgba(0,212,255,0.1); color: var(--cyan); border: 1px solid rgba(0,212,255,0.2); }
+.badge-dim { background: var(--bg-tertiary); color: var(--text-dim); border: 1px solid var(--border); }
+
+/* ===== BUTTONS ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: all var(--transition);
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: rgba(0,255,65,0.15);
+  color: var(--green);
+  border: 1px solid rgba(0,255,65,0.3);
+}
+.btn-primary:hover {
+  background: rgba(0,255,65,0.25);
+  border-color: var(--green);
+  box-shadow: 0 0 10px var(--green-glow);
+}
+
+.btn-danger {
+  background: rgba(255,23,68,0.1);
+  color: var(--red);
+  border: 1px solid rgba(255,23,68,0.2);
+}
+.btn-danger:hover {
+  background: rgba(255,23,68,0.2);
+  border-color: var(--red);
+}
+
+.btn-amber {
+  background: rgba(255,179,0,0.1);
+  color: var(--amber);
+  border: 1px solid rgba(255,179,0,0.2);
+}
+.btn-amber:hover {
+  background: rgba(255,179,0,0.2);
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.65rem;
+}
+
+.btn-icon {
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: var(--radius);
+}
+.btn-icon:hover {
+  border-color: var(--border-bright);
+  color: var(--text-primary);
+}
+
+/* ===== FORM ===== */
+.form-group {
+  margin-bottom: 14px;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+
+.form-input {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  transition: border-color var(--transition);
+}
+
+.form-input:focus {
+  border-color: var(--green-dim);
+  outline: none;
+}
+
+/* ===== DROPDOWN ===== */
+select.form-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23606070'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+select.form-input::after {
+  content: '▼';
+  font-size: 0.6em;
+}
+
+/* ===== TOGGLES ===== */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.toggle-row:last-child { border-bottom: none; }
+
+.toggle-label {
+  font-size: 0.75rem;
+  color: var(--text-primary);
+}
+
+.toggle-sub {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.toggle.on {
+  background: rgba(0,255,65,0.2);
+  border-color: var(--green-dim);
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform var(--transition), background var(--transition);
+}
+
+.toggle.on .toggle-knob {
+  transform: translateX(16px);
+  background: var(--green);
+}
+
+/* ===== PROGRESS ===== */
+.progress-bar {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.progress-fill.warning { background: var(--amber); }
+.progress-fill.danger { background: var(--red); }
+
+/* ===== CHARTS ===== */
+.chart-container {
+  position: relative;
+  height: 140px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.sparkline {
+  width: 100%;
+  height: 100%;
+}
+
+/* ===== LOG ===== */
+.log-container {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  height: 400px;
+  overflow-y: auto;
+  padding: 8px;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.log-line {
+  padding: 1px 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-line.info { color: var(--text-dim); }
+.log-line.warn { color: var(--amber); }
+.log-line.error { color: var(--red); }
+.log-line.trade { color: var(--green); font-weight: 500; }
+.log-line.arb { color: var(--cyan); font-weight: 500; }
+
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.log-filter-input {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius);
+}
+
+/* ===== STATUS INDICATORS ===== */
+.connection-lost-banner {
+  background: rgba(255,23,68,0.15);
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.connection-lost-banner.show { display: flex; }
+
+/* ===== MODAL ===== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  display: none;
+}
+
+.modal-overlay.show { display: flex; }
+
+.modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius);
+  padding: 24px;
+  max-width: 480px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--amber);
+  margin-bottom: 12px;
+}
+
+.modal-body {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-bottom: 20px;
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+/* ===== ANIMATIONS ===== */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 5px var(--green-glow); }
+  50% { box-shadow: 0 0 15px var(--green-glow); }
+}
+
+.blink { animation: pulse 2s infinite; }
+.glow { animation: glow 3s infinite; }
+
+/* ===== SECTIONS ===== */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+.section-sub {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; }
+  .sidebar {
+    position: static;
+    height: auto;
+    display: flex;
+    flex-wrap: wrap;
+    padding: 8px;
+    gap: 4px;
+  }
+  .sidebar-label { display: none; }
+  .sidebar-item {
+    padding: 6px 10px;
+    border-left: none;
+    border-radius: var(--radius);
+    border-bottom: 2px solid transparent;
+  }
+  .sidebar-item.active {
+    border-bottom-color: var(--green);
+    background: var(--green-dark);
+  }
+  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ===== SPORTS SECTION ===== */
+.game-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 10px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.game-card.live {
+  border-color: rgba(0,255,65,0.3);
+  background: rgba(0,255,65,0.02);
+}
+
+.team-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.team-side.away { text-align: right; }
+
+.team-abbr {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.team-name {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+}
+
+.team-record {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+}
+
+.game-center {
+  text-align: center;
+}
+
+.game-score {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 2px;
+}
+
+.game-status {
+  font-size: 0.65rem;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.game-status.pre {
+  color: var(--text-dim);
+}
+
+.game-status.post {
+  color: var(--amber);
+}
+
+.game-wp-bar {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  font-size: 0.6rem;
+  color: var(--text-dim);
+}
+
+/* ===== WEATHER SECTION ===== */
+.city-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.city-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.city-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.city-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.city-temp {
+  font-size: 0.75rem;
+  color: var(--cyan);
+}
+
+.weather-market-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.7rem;
+}
+
+.weather-market-row:last-child { border-bottom: none; }
+
+.edge-positive { color: var(--green); }
+.edge-negative { color: var(--red); }
+.edge-neutral { color: var(--text-dim); }
+
+/* ===== ARB SECTION ===== */
+.arb-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.arb-card.profitable {
+  border-color: rgba(0,212,255,0.3);
+  background: rgba(0,212,255,0.02);
+}
+
+/* ===== JOURNAL SECTION ===== */
+.calibration-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.brier-good { color: var(--green); }
+.brier-ok { color: var(--amber); }
+.brier-bad { color: var(--red); }
+
+/* ===== CONFIG SECTION ===== */
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.config-section-title {
+  font-size: 0.65rem;
+  color: var(--green-dim);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+</style>
 </head>
 <body>
+<div class="app">
 
-<div id="app">
-
-    <!-- HEADER -->
-    <header class="header">
-        <div class="header-left">
-            <div class="logo">
-                <span class="diamond">◆</span> FREYJA QUANT ENGINE <span class="version-tag">v2</span>
-            </div>
-            <div id="status-badge" class="status-badge disconnected">
-                <span class="dot"></span>CONNECTING...
-            </div>
-        </div>
-        <div class="header-right">
-            <div class="header-metric">
-                <span class="label">LATENCY</span>
-                <span id="latency-value" class="value">---</span>
-            </div>
-            <div class="header-metric">
-                <span class="label">API</span>
-                <span id="api-status" class="value text-green glow-green">LOCALHOST</span>
-            </div>
-            <span id="system-time" class="system-time">00:00:00.000</span>
-        </div>
-    </header>
-
-    <!-- TAB BAR -->
-    <nav class="tab-bar">
-        <button class="tab-btn active" data-tab="dashboard">
-            <span class="tab-icon">◈</span>DASHBOARD
-        </button>
-        <button class="tab-btn" data-tab="controls">
-            <span class="tab-icon">⚙</span>CONTROLS
-        </button>
-        <button class="tab-btn" data-tab="logs">
-            <span class="tab-icon">▤</span>LOGS
-        </button>
-        <button class="tab-btn" data-tab="weather">
-            <span class="tab-icon">☁</span>WEATHER
-        </button>
-    </nav>
-
-    <!-- MAIN CONTENT -->
-    <div class="main-content">
-
-        <!-- TAB 1: DASHBOARD -->
-        <div class="tab-content active" data-tab="dashboard">
-            <div class="metrics-grid">
-                <div id="metric-portfolio-value" class="metric-card green">
-                    <div class="metric-label">Portfolio Value</div>
-                    <div class="metric-value">$0.00</div>
-                </div>
-                <div id="metric-cash-balance" class="metric-card cyan">
-                    <div class="metric-label">Cash Balance</div>
-                    <div class="metric-value cyan">$0.00</div>
-                </div>
-                <div id="metric-open-positions" class="metric-card amber">
-                    <div class="metric-label">Open Positions</div>
-                    <div class="metric-value amber">0</div>
-                </div>
-                <div id="metric-win-rate" class="metric-card green">
-                    <div class="metric-label">Win Rate</div>
-                    <div class="metric-value">0.0%</div>
-                </div>
-                <div id="metric-total-pnl" class="metric-card green">
-                    <div class="metric-label">Total P&L</div>
-                    <div class="metric-value">$0.00</div>
-                </div>
-                <div id="metric-session-pnl" class="metric-card green">
-                    <div class="metric-label">Session P&L</div>
-                    <div class="metric-value">$0.00</div>
-                </div>
-            </div>
-
-            <div class="dashboard-grid">
-                <div class="panel">
-                    <div class="panel-header">
-                        <span class="panel-title">▸ Active Positions</span>
-                        <span class="text-dim" style="font-size:10px" id="positions-count">0 open</span>
-                    </div>
-                    <div class="panel-body" style="padding:0">
-                        <div class="table-scroll">
-                            <table class="data-table">
-                                <thead><tr><th>Ticker</th><th>Side</th><th>Entry</th><th>Current</th><th>P&L</th><th>Settlement</th><th>VPIN</th></tr></thead>
-                                <tbody id="positions-tbody"><tr><td colspan="7" class="empty-table">No open positions</td></tr></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-                <div class="panel">
-                    <div class="panel-header">
-                        <span class="panel-title">▸ Trade Log</span>
-                        <span class="text-dim" style="font-size:10px" id="trades-count">0 trades</span>
-                    </div>
-                    <div class="panel-body" style="padding:0">
-                        <div class="table-scroll">
-                            <table class="data-table">
-                                <thead><tr><th>Time</th><th>Action</th><th>Ticker</th><th>Side</th><th>Price</th><th>Qty</th><th>P&L</th></tr></thead>
-                                <tbody id="trades-tbody"><tr><td colspan="7" class="empty-table">No trades recorded</td></tr></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-                <div class="panel full-width">
-                    <div class="panel-header">
-                        <span class="panel-title">▸ BTC/USD</span>
-                        <span id="btc-price" class="text-green glow-green" style="font-size:14px;font-weight:700;font-family:var(--font-code)">—</span>
-                    </div>
-                    <div class="panel-body" style="padding:0 0 8px 0;">
-                        <div id="btc-chart" class="chart-container"></div>
-                        <div class="sparkline-row" style="padding:0 12px;">
-                            <div class="sparkline-card">
-                                <div class="sparkline-header"><span class="sparkline-ticker">ETH/USD</span><span id="eth-price" class="sparkline-price">—</span></div>
-                                <div class="sparkline-header" style="margin-bottom:0"><span></span><span id="eth-change" class="sparkline-price" style="font-size:10px">—</span></div>
-                                <canvas id="eth-sparkline" class="sparkline-chart" style="width:100%;height:40px"></canvas>
-                            </div>
-                            <div class="sparkline-card">
-                                <div class="sparkline-header"><span class="sparkline-ticker">SOL/USD</span><span id="sol-price" class="sparkline-price">—</span></div>
-                                <div class="sparkline-header" style="margin-bottom:0"><span></span><span id="sol-change" class="sparkline-price" style="font-size:10px">—</span></div>
-                                <canvas id="sol-sparkline" class="sparkline-chart" style="width:100%;height:40px"></canvas>
-                            </div>
-                            <div class="sparkline-card">
-                                <div class="sparkline-header"><span class="sparkline-ticker">XRP/USD</span><span id="xrp-price" class="sparkline-price">—</span></div>
-                                <div class="sparkline-header" style="margin-bottom:0"><span></span><span id="xrp-change" class="sparkline-price" style="font-size:10px">—</span></div>
-                                <canvas id="xrp-sparkline" class="sparkline-chart" style="width:100%;height:40px"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="panel full-width">
-                    <div class="panel-header"><span class="panel-title">▸ Signal Indicators</span></div>
-                    <div class="panel-body">
-                        <div class="signals-grid">
-                            <div class="signal-card">
-                                <div class="signal-label">RSI</div>
-                                <div class="gauge-container"><svg id="rsi-gauge" class="gauge-svg" viewBox="0 0 56 56"><circle class="gauge-bg" cx="28" cy="28" r="24"></circle><circle class="gauge-fill" cx="28" cy="28" r="24" stroke-dasharray="150.8" stroke-dashoffset="75.4"></circle></svg></div>
-                                <div id="rsi-value" class="signal-value text-green glow-green">50.0</div>
-                            </div>
-                            <div class="signal-card">
-                                <div class="signal-label">VPIN</div>
-                                <div class="gauge-container"><svg id="vpin-gauge" class="gauge-svg" viewBox="0 0 56 56"><circle class="gauge-bg" cx="28" cy="28" r="24"></circle><circle class="gauge-fill" cx="28" cy="28" r="24" stroke-dasharray="150.8" stroke-dashoffset="75.4"></circle></svg></div>
-                                <div id="vpin-value" class="signal-value text-amber glow-amber">0.500</div>
-                            </div>
-                            <div class="signal-card">
-                                <div class="signal-label">Confidence</div>
-                                <div style="margin: 12px 0 8px"><div id="confidence-value" class="signal-value text-cyan glow-cyan" style="font-size:20px">0.0%</div></div>
-                                <div class="confidence-bar"><div id="confidence-fill" class="confidence-fill" style="width:0%"></div></div>
-                            </div>
-                            <div class="signal-card">
-                                <div class="signal-label">Direction</div>
-                                <div id="direction-arrow" class="direction-arrow" style="margin:8px 0"><span class="text-dim" style="font-size:32px">◆</span></div>
-                                <div id="direction-label" class="signal-value text-dim" style="font-size:12px">NEUTRAL</div>
-                            </div>
-                            <div class="signal-card">
-                                <div class="signal-label">Kelly Size</div>
-                                <div style="margin: 12px 0 8px"><div id="kelly-value" class="signal-value text-green glow-green" style="font-size:20px">$0.00</div></div>
-                                <div class="text-dim" style="font-size:9px;margin-top:4px">POSITION SIZE</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="panel full-width">
-                    <div class="panel-header"><span class="panel-title">▸ Performance Stats</span></div>
-                    <div class="panel-body">
-                        <div class="perf-stats">
-                            <div class="perf-stat"><div id="stat-total-trades" class="stat-value">0</div><div class="stat-label">Total Trades</div></div>
-                            <div class="perf-stat"><div id="stat-avg-hold" class="stat-value">0m</div><div class="stat-label">Avg Hold Time</div></div>
-                            <div class="perf-stat"><div id="stat-best-trade" class="stat-value" style="color:var(--green)">$0.00</div><div class="stat-label">Best Trade</div></div>
-                            <div class="perf-stat"><div id="stat-worst-trade" class="stat-value" style="color:var(--red)">$0.00</div><div class="stat-label">Worst Trade</div></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- TAB 2: CONTROLS -->
-        <div class="tab-content" data-tab="controls">
-            <div class="controls-grid">
-                <div class="panel">
-                    <div class="panel-header"><span class="panel-title">▸ Bot Control</span></div>
-                    <div class="panel-body">
-                        <div class="bot-controls">
-                            <button id="btn-start" class="ctrl-btn start">▶ START <span class="spinner"></span></button>
-                            <button id="btn-stop" class="ctrl-btn stop">■ STOP <span class="spinner"></span></button>
-                            <button id="btn-restart" class="ctrl-btn restart">⟳ RESTART <span class="spinner"></span></button>
-                        </div>
-                        <div class="status-info">
-                            <div class="status-item"><div class="label">Status</div><div id="ctrl-status-val" class="value text-dim">—</div></div>
-                            <div class="status-item"><div class="label">Uptime</div><div id="ctrl-uptime-val" class="value">—</div></div>
-                            <div class="status-item"><div class="label">PID</div><div id="ctrl-pid-val" class="value">—</div></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="panel">
-                    <div class="panel-header"><span class="panel-title">▸ Trading Mode</span></div>
-                    <div class="panel-body">
-                        <div class="mode-toggle-container">
-                            <div id="mode-toggle" class="toggle-switch paper">
-                                <div class="toggle-slider"></div>
-                                <div class="toggle-track">
-                                    <span class="toggle-option opt-paper">PAPER</span>
-                                    <span class="toggle-option opt-live">LIVE</span>
-                                </div>
-                            </div>
-                            <div class="mode-warning"><span id="mode-label" class="text-amber">⚠ Paper trading — no real money at risk</span></div>
-                        </div>
-                        <div class="paper-balance-input">
-                            <label>Paper Balance ($)</label>
-                            <input type="number" id="paper-balance" value="1000" min="0" step="100">
-                        </div>
-                    </div>
-                </div>
-                <div class="panel full-width">
-                    <div class="panel-header">
-                        <span class="panel-title">▸ Aggressiveness Controls</span>
-                        <button id="apply-config-btn" class="apply-btn" disabled>NO CHANGES</button>
-                    </div>
-                    <div class="panel-body">
-                        <div class="sliders-section">
-                            <div class="sliders-section-title">◆ Strategy Parameters</div>
-                            <div class="slider-group">
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Signal Confidence Threshold</span><span id="display-MIN_CONFIDENCE" class="slider-value">0.05</span></div><input type="range" id="slider-MIN_CONFIDENCE" min="0.01" max="0.20" step="0.01" value="0.05"><div class="slider-range-labels"><span>0.01</span><span>0.20</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Min Contract Price (¢)</span><span id="display-MIN_CONTRACT_PRICE" class="slider-value">15</span></div><input type="range" id="slider-MIN_CONTRACT_PRICE" min="5" max="50" step="1" value="15"><div class="slider-range-labels"><span>5</span><span>50</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Max Contract Price (¢)</span><span id="display-MAX_CONTRACT_PRICE" class="slider-value">85</span></div><input type="range" id="slider-MAX_CONTRACT_PRICE" min="50" max="99" step="1" value="85"><div class="slider-range-labels"><span>50</span><span>99</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Kelly Fraction</span><span id="display-KELLY_FRACTION" class="slider-value">0.15</span></div><input type="range" id="slider-KELLY_FRACTION" min="0.05" max="0.50" step="0.01" value="0.15"><div class="slider-range-labels"><span>0.05</span><span>0.50</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Min Expected Value (¢)</span><span id="display-MIN_EV_CENTS" class="slider-value">1.5</span></div><input type="range" id="slider-MIN_EV_CENTS" min="0.5" max="5.0" step="0.1" value="1.5"><div class="slider-range-labels"><span>0.5</span><span>5.0</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Profit Target %</span><span id="display-PROFIT_TARGET_PCT" class="slider-value">0.30</span></div><input type="range" id="slider-PROFIT_TARGET_PCT" min="0.10" max="1.00" step="0.05" value="0.30"><div class="slider-range-labels"><span>0.10</span><span>1.00</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Stop Loss %</span><span id="display-STOP_LOSS_PCT" class="slider-value">0.25</span></div><input type="range" id="slider-STOP_LOSS_PCT" min="0.10" max="0.60" step="0.05" value="0.25"><div class="slider-range-labels"><span>0.10</span><span>0.60</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">VPIN Exit Threshold</span><span id="display-VPIN_EXIT_THRESHOLD" class="slider-value">0.70</span></div><input type="range" id="slider-VPIN_EXIT_THRESHOLD" min="0.50" max="1.00" step="0.01" value="0.70"><div class="slider-range-labels"><span>0.50</span><span>1.00</span></div></div>
-                            </div>
-                        </div>
-                        <div class="sliders-section">
-                            <div class="sliders-section-title">◆ Risk Management</div>
-                            <div class="slider-group">
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Max Positions</span><span id="display-MAX_CONCURRENT_POSITIONS" class="slider-value">3</span></div><input type="range" id="slider-MAX_CONCURRENT_POSITIONS" min="1" max="10" step="1" value="3"><div class="slider-range-labels"><span>1</span><span>10</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Max Exposure ($)</span><span id="display-MAX_TOTAL_EXPOSURE_DOLLARS" class="slider-value">100</span></div><input type="range" id="slider-MAX_TOTAL_EXPOSURE_DOLLARS" min="10" max="500" step="5" value="100"><div class="slider-range-labels"><span>$10</span><span>$500</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Max Position Size ($)</span><span id="display-MAX_POSITION_SIZE_DOLLARS" class="slider-value">25</span></div><input type="range" id="slider-MAX_POSITION_SIZE_DOLLARS" min="5" max="100" step="1" value="25"><div class="slider-range-labels"><span>$5</span><span>$100</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Daily Loss Limit ($)</span><span id="display-DAILY_LOSS_LIMIT_DOLLARS" class="slider-value">20</span></div><input type="range" id="slider-DAILY_LOSS_LIMIT_DOLLARS" min="5" max="100" step="1" value="20"><div class="slider-range-labels"><span>$5</span><span>$100</span></div></div>
-                            </div>
-                        </div>
-                        <div class="sliders-section">
-                            <div class="sliders-section-title">◆ Timing</div>
-                            <div class="slider-group">
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Loop Interval (s)</span><span id="display-LOOP_INTERVAL_SECONDS" class="slider-value">15</span></div><input type="range" id="slider-LOOP_INTERVAL_SECONDS" min="5" max="60" step="1" value="15"><div class="slider-range-labels"><span>5s</span><span>60s</span></div></div>
-                                <div class="slider-item"><div class="slider-label-row"><span class="slider-label">Scan Interval (s)</span><span id="display-SCAN_INTERVAL_SECONDS" class="slider-value">30</span></div><input type="range" id="slider-SCAN_INTERVAL_SECONDS" min="15" max="120" step="5" value="30"><div class="slider-range-labels"><span>15s</span><span>120s</span></div></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- TAB 3: LOGS -->
-        <div class="tab-content" data-tab="logs">
-            <div class="log-toolbar">
-                <input type="text" id="log-filter" class="log-search" placeholder="▸ Filter logs...">
-                <button id="autoscroll-btn" class="log-btn active">⤓ AUTO-SCROLL ON</button>
-                <button id="refresh-log-btn" class="log-btn">↻ REFRESH</button>
-                <button id="clear-log-btn" class="log-btn">✕ CLEAR</button>
-            </div>
-            <div id="log-viewer" class="log-viewer">
-                <div class="log-line debug">Connecting to Freyja API server...</div>
-            </div>
-        </div>
-
-        <!-- TAB 4: WEATHER -->
-        <div class="tab-content" data-tab="weather">
-            <div class="weather-header-bar">
-                <div class="weather-header-title">
-                    <span class="weather-header-icon">☁</span>
-                    WEATHER MARKET SCANNER
-                    <span class="weather-header-sub">NWS FORECAST + NORMAL CDF MODEL</span>
-                </div>
-                <div class="weather-header-meta">
-                    <div class="weather-status-dot" id="weather-status-dot"></div>
-                    <span id="weather-status-text" class="text-dim" style="font-size:10px">AWAITING DATA</span>
-                    <span class="weather-divider">│</span>
-                    <span id="weather-city-count" class="text-dim" style="font-size:10px">0 CITIES</span>
-                    <span class="weather-divider">│</span>
-                    <span id="weather-last-update" class="text-dim" style="font-size:10px">LAST: —</span>
-                </div>
-            </div>
-            <div class="panel">
-                <div class="panel-header">
-                    <span class="panel-title">▸ City Selector</span>
-                    <span class="text-dim" style="font-size:10px">SELECT CITY TO VIEW FORECAST &amp; MARKETS</span>
-                </div>
-                <div class="panel-body" style="padding:12px 16px">
-                    <div id="weather-city-chips" class="weather-city-chips">
-                        <span class="text-dim" style="font-size:11px">Loading cities...</span>
-                    </div>
-                </div>
-            </div>
-            <div class="weather-main-grid">
-                <div class="panel">
-                    <div class="panel-header">
-                        <span class="panel-title">▸ NWS Forecast</span>
-                        <span id="weather-forecast-city" class="text-dim" style="font-size:10px">— SELECT A CITY —</span>
-                    </div>
-                    <div class="panel-body" style="padding:12px">
-                        <div id="weather-forecast-cards" class="weather-forecast-cards">
-                            <div class="weather-empty-state">Select a city to view forecast</div>
-                        </div>
-                        <div id="weather-model-viz" class="weather-model-viz" style="display:none">
-                            <div class="weather-model-title">◆ NORMAL CDF MODEL</div>
-                            <div id="weather-model-params" class="weather-model-params"></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="panel">
-                    <div class="panel-header">
-                        <span class="panel-title">▸ Market Brackets</span>
-                        <span id="weather-markets-city" class="text-dim" style="font-size:10px">— SELECT A CITY —</span>
-                    </div>
-                    <div class="panel-body" style="padding:0">
-                        <div class="table-scroll" style="max-height:400px">
-                            <table class="data-table" id="weather-markets-table">
-                                <thead><tr><th>Bracket</th><th>Model Prob</th><th>Mkt Implied</th><th>Edge</th><th>Vol</th><th>YES Ask</th><th>Signal</th></tr></thead>
-                                <tbody id="weather-markets-tbody"><tr><td colspan="7" class="empty-table">Select a city to view markets</td></tr></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="panel">
-                <div class="panel-header">
-                    <span class="panel-title">▸ Weather Model Config</span>
-                    <span class="text-dim" style="font-size:10px">READ-ONLY — FROM API</span>
-                </div>
-                <div class="panel-body" style="padding:12px 16px">
-                    <div id="weather-config-grid" class="weather-config-grid">
-                        <div class="weather-config-item"><div class="weather-config-label">Enabled</div><div id="wcfg-enabled" class="weather-config-value text-dim">—</div></div>
-                        <div class="weather-config-item"><div class="weather-config-label">Paper Mode</div><div id="wcfg-paper" class="weather-config-value text-dim">—</div></div>
-                        <div class="weather-config-item"><div class="weather-config-label">Min Edge</div><div id="wcfg-min-edge" class="weather-config-value text-dim">—</div></div>
-                        <div class="weather-config-item"><div class="weather-config-label">Kelly Fraction</div><div id="wcfg-kelly" class="weather-config-value text-dim">—</div></div>
-                        <div class="weather-config-item"><div class="weather-config-label">Sigma Inflation</div><div id="wcfg-sigma" class="weather-config-value text-dim">—</div></div>
-                        <div class="weather-config-item"><div class="weather-config-label">Last Fetch</div><div id="wcfg-ts" class="weather-config-value text-dim">—</div></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
+<!-- ===== HEADER ===== -->
+<header class="header">
+  <div class="header-logo">
+    <span class="logo-text">FREYJA</span>
+    <span class="logo-version">v2.1</span>
+  </div>
+  <div class="header-status">
+    <div class="status-item">
+      <div class="status-dot" id="conn-dot"></div>
+      <span id="conn-label" style="font-size:0.7rem;color:var(--text-dim)">CONNECTING</span>
     </div>
+    <div class="status-item">
+      <div class="status-dot" id="bot-dot"></div>
+      <span id="bot-label" style="font-size:0.7rem;color:var(--text-dim)">BOT STATUS</span>
+    </div>
+    <div class="latency-badge" id="latency-badge">-- ms</div>
+    <span id="mode-badge" class="badge badge-amber" style="display:none">LIVE</span>
+  </div>
+</header>
+
+<!-- ===== CONNECTION LOST BANNER ===== -->
+<div class="connection-lost-banner" id="conn-lost-banner">⚠ CONNECTION LOST — ATTEMPTING TO RECONNECT...</div>
+
+<!-- ===== MODAL ===== -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">⚠ WARNING: LIVE TRADING</div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="modal-confirm" onclick="confirmModal()">Confirm</button>
+    </div>
+  </div>
 </div>
 
-<div id="live-modal" class="modal-overlay">
-    <div class="modal">
-        <div class="modal-icon">⚠️</div>
-        <div class="modal-title">SWITCHING TO LIVE TRADING</div>
-        <div class="modal-text">You are about to enable <strong style="color:#ff0033">LIVE TRADING</strong> mode.<br>This will execute real trades with real money on Kalshi.<br><br>Type <strong style="color:#ff0033;letter-spacing:2px">CONFIRM</strong> below to proceed.</div>
-        <input type="text" id="confirm-input" class="modal-input" placeholder="Type CONFIRM" autocomplete="off" spellcheck="false">
-        <div class="modal-buttons">
-            <button id="cancel-modal" class="modal-btn cancel">✕ CANCEL</button>
-            <button id="confirm-btn" class="modal-btn confirm" disabled>▶ ENABLE LIVE</button>
-        </div>
+<!-- ===== MAIN ===== -->
+<div class="main">
+
+<!-- ===== SIDEBAR ===== -->
+<aside class="sidebar">
+  <div class="sidebar-section">
+    <div class="sidebar-label">Navigation</div>
+    <div class="sidebar-item active" onclick="showPage('overview')" id="nav-overview">
+      <span class="icon">📈</span> PORTFOLIO OVERVIEW
     </div>
+    <div class="sidebar-item" onclick="showPage('strategy')" id="nav-strategy">
+      <span class="icon">⚡</span> STRATEGY PARAMS
+    </div>
+    <div class="sidebar-item" onclick="showPage('weather')" id="nav-weather">
+      <span class="icon">🌤</span> WEATHER MARKETS
+    </div>
+    <div class="sidebar-item" onclick="showPage('sports')" id="nav-sports">
+      <span class="icon">🏀</span> SPORTS TRADING — NBA
+    </div>
+    <div class="sidebar-item" onclick="showPage('arb')" id="nav-arb">
+      <span class="icon">🔍</span> ARBITRAGE SCANNER
+    </div>
+    <div class="sidebar-item" onclick="showPage('journal')" id="nav-journal">
+      <span class="icon">📊</span> TRADE JOURNAL
+    </div>
+    <div class="sidebar-item" onclick="showPage('positions')" id="nav-positions">
+      <span class="icon">📋</span> SYSTEM LOG
+    </div>
+    <div class="sidebar-item" onclick="showPage('config')" id="nav-config">
+      <span class="icon">⚙</span> BOT CONTROL
+    </div>
+  </div>
+</aside>
+
+<!-- ===== CONTENT ===== -->
+<main class="content">
+
+<!-- ===== PAGE: OVERVIEW ===== -->
+<section class="page active" id="page-overview">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Portfolio Overview</div>
+      <div class="section-sub" id="last-update">Loading...</div>
+    </div>
+    <button class="btn btn-icon" onclick="forceRefresh()" title="Refresh">&#8635;</button>
+  </div>
+
+  <div class="metrics-grid" id="metrics-grid">
+    <div class="metric-card">
+      <div class="metric-label">Portfolio Value</div>
+      <div class="metric-value" id="m-portfolio">$-.--</div>
+      <div class="metric-sub" id="m-portfolio-sub"></div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Total P&amp;L</div>
+      <div class="metric-value" id="m-pnl">$0.00</div>
+      <div class="metric-sub" id="m-pnl-sub">Session: $0.00</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Open Positions</div>
+      <div class="metric-value neutral" id="m-positions">0</div>
+      <div class="metric-sub" id="m-positions-sub">0 total trades</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Win Rate</div>
+      <div class="metric-value" id="m-winrate">0.0%</div>
+      <div class="metric-sub" id="m-winrate-sub">0 wins / 0 losses</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Open Positions</span>
+      <span class="badge badge-dim" id="pos-count-badge">0 positions</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>TICKER</th><th>SIDE</th><th>CONTRACTS</th><th>ENTRY</th><th>CURRENT</th><th>P&amp;L</th><th>CATEGORY</th><th>OPENED</th>
+          </tr>
+        </thead>
+        <tbody id="positions-tbody"><tr><td colspan="8" style="text-align:center;color:var(--text-muted)">No open positions</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Recent Trades</span>
+      <span class="badge badge-dim" id="trades-count-badge">0 trades</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>TICKER</th><th>SIDE</th><th>CONTRACTS</th><th>ENTRY</th><th>EXIT</th><th>P&amp;L</th><th>CATEGORY</th><th>DATE</th>
+          </tr>
+        </thead>
+        <tbody id="trades-tbody"><tr><td colspan="8" style="text-align:center;color:var(--text-muted)">No completed trades</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== PAGE: STRATEGY PARAMS ===== -->
+<section class="page" id="page-strategy">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Strategy Parameters</div>
+      <div class="section-sub">Live configuration — changes restart the bot</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" onclick="saveConfig()" id="save-config-btn" disabled>Save &amp; Restart</button>
+      <button class="btn btn-icon" onclick="loadConfig()" title="Reload">&#8635;</button>
+    </div>
+  </div>
+
+  <div id="config-dirty-banner" style="display:none;margin-bottom:12px" class="connection-lost-banner show" style="background:rgba(255,179,0,0.1);border-color:var(--amber);color:var(--amber)">
+    Unsaved changes — click Save &amp; Restart to apply
+  </div>
+
+  <div class="config-grid" id="config-form">
+    <!-- Populated by JS -->
+    <div style="color:var(--text-muted);font-size:0.75rem">Loading configuration...</div>
+  </div>
+</section>
+
+<!-- ===== PAGE: WEATHER ===== -->
+<section class="page" id="page-weather">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Weather Markets</div>
+      <div class="section-sub">NWS forecast vs Kalshi temperature markets</div>
+    </div>
+    <button class="btn btn-icon" onclick="loadWeather()" title="Refresh">&#8635;</button>
+  </div>
+
+  <div id="weather-status" style="margin-bottom:12px"></div>
+
+  <div class="city-grid" id="weather-cities">
+    <div style="color:var(--text-muted);font-size:0.75rem">Loading weather data...</div>
+  </div>
+</section>
+
+<!-- ===== PAGE: SPORTS ===== -->
+<section class="page" id="page-sports">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Sports Trading — NBA</div>
+      <div class="section-sub">ESPN live data + Kalshi spread/total markets</div>
+    </div>
+    <button class="btn btn-icon" onclick="loadSports()" title="Refresh">&#8635;</button>
+  </div>
+
+  <div id="sports-status" style="margin-bottom:12px"></div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:20px">
+    <div class="metric-card">
+      <div class="metric-label">Live Games</div>
+      <div class="metric-value neutral" id="s-live-count">0</div>
+      <div class="metric-sub" id="s-game-count">0 total today</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Spread Markets</div>
+      <div class="metric-value neutral" id="s-spread-count">0</div>
+      <div class="metric-sub">KXNBASPREAD open</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Total Markets</div>
+      <div class="metric-value neutral" id="s-total-count">0</div>
+      <div class="metric-sub">KXNBATOTAL open</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Today's Games</span>
+      <span class="badge badge-green blink" id="sports-live-badge" style="display:none">LIVE</span>
+    </div>
+    <div id="games-container">
+      <div style="color:var(--text-muted);font-size:0.75rem">Loading games...</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Spread Markets</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>TICKER</th><th>TITLE</th><th>YES BID</th><th>YES ASK</th><th>VOLUME</th></tr></thead>
+        <tbody id="spread-tbody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Total Points Markets</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>TICKER</th><th>TITLE</th><th>YES BID</th><th>YES ASK</th><th>VOLUME</th></tr></thead>
+        <tbody id="total-tbody"><tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== PAGE: ARB ===== -->
+<section class="page" id="page-arb">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Arbitrage Scanner</div>
+      <div class="section-sub"><span class="blink">⟳ Scanning Kalshi markets for complement/partition arbitrage</span></div>
+    </div>
+    <button class="btn btn-icon" onclick="loadArb()" title="Run Scan">&#8635;</button>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px">
+    <div class="metric-card">
+      <div class="metric-label">Events Scanned</div>
+      <div class="metric-value neutral" id="arb-events">0</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Profitable Opps</div>
+      <div class="metric-value" id="arb-profitable">0</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Arbitrage Opportunities</span>
+      <span style="font-size:0.65rem;color:var(--text-dim)">EVENT</span><span style="font-size:0.65rem;color:var(--text-dim)">COST ¢</span><span style="font-size:0.65rem;color:var(--text-dim)">PROFIT ¢</span><span style="font-size:0.65rem;color:var(--text-dim)">PROFIT %</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>TYPE</th><th>EVENT</th><th>COST ¢</th><th>NET PROFIT ¢</th><th>NET %</th><th>OUTCOMES</th>
+          </tr>
+        </thead>
+        <tbody id="arb-tbody"><tr><td colspan="6" style="text-align:center;color:var(--text-muted)">Loading arb scan...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== PAGE: JOURNAL ===== -->
+<section class="page" id="page-journal">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Trade Journal</div>
+      <div class="section-sub">Prediction calibration + Brier score tracking</div>
+    </div>
+    <button class="btn btn-icon" onclick="loadJournal()" title="Refresh">&#8635;</button>
+  </div>
+
+  <div class="calibration-grid" id="calibration-grid">
+    <div class="metric-card">
+      <div class="metric-label">Total Predictions</div>
+      <div class="metric-value neutral" id="j-total">0</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Mean Brier Score</div>
+      <div class="metric-value" id="j-brier">0.000</div>
+      <div class="metric-sub" id="j-brier-sub">lower is better</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Win Rate</div>
+      <div class="metric-value" id="j-winrate">0%</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Total P&amp;L</div>
+      <div class="metric-value" id="j-pnl">$0.00</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">📊 Recent Predictions</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>TICKER</th><th>CATEGORY</th><th>MODEL</th><th>MARKET</th><th>EDGE</th><th>SIDE</th><th>RESOLVED</th><th>BRIER</th><th>P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody id="journal-tbody"><tr><td colspan="9" style="text-align:center;color:var(--text-muted)">Loading journal...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== PAGE: LOG ===== -->
+<section class="page" id="page-positions">
+  <div class="section-header">
+    <div>
+      <div class="section-title">📋 System Log</div>
+      <div class="section-sub">Live bot.log output</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <label style="font-size:0.65rem;color:var(--text-dim);display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="log-autoscroll" checked onchange="state.logAutoScroll=this.checked">
+        Auto-scroll
+      </label>
+      <button class="btn btn-icon" onclick="loadLog()" title="Refresh">&#8635;</button>
+    </div>
+  </div>
+  <div class="log-toolbar">
+    <input type="text" class="log-filter-input" placeholder="Filter log..." oninput="filterLog(this.value)" id="log-filter-input">
+    <button class="btn btn-icon btn-sm" onclick="clearLogFilter()">Clear</button>
+  </div>
+  <div class="log-container" id="log-container"></div>
+</section>
+
+<!-- ===== PAGE: CONFIG (BOT CONTROL) ===== -->
+<section class="page" id="page-config">
+  <div class="section-header">
+    <div>
+      <div class="section-title">⚙ BOT CONTROL</div>
+      <div class="section-sub">Start, stop, restart the trading engine</div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Bot Service</span></div>
+      <div style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div class="status-dot" id="ctrl-bot-dot"></div>
+          <span id="ctrl-bot-status" style="font-size:0.85rem;color:var(--text-primary)">unknown</span>
+        </div>
+        <div style="font-size:0.65rem;color:var(--text-dim)" id="ctrl-bot-pid"></div>
+        <div style="font-size:0.65rem;color:var(--text-dim)" id="ctrl-bot-since"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="botAction('start')">&#9654; START</button>
+        <button class="btn btn-danger" onclick="botAction('stop')">&#9632; STOP</button>
+        <button class="btn btn-amber" onclick="botAction('restart')">&#8635; RESTART</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><span class="card-title">Trading Mode</span></div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Paper Mode</div>
+          <div class="toggle-sub">Simulate trades without real capital</div>
+        </div>
+        <div class="toggle on" id="toggle-paper" onclick="toggleConfig('PAPER_MODE')"><div class="toggle-knob"></div></div>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Weather Module</div>
+          <div class="toggle-sub">Enable weather market trading</div>
+        </div>
+        <div class="toggle on" id="toggle-weather" onclick="toggleConfig('WEATHER_ENABLED')"><div class="toggle-knob"></div></div>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Sports Module (NBA)</div>
+          <div class="toggle-sub">Enable NBA spread/total trading</div>
+        </div>
+        <div class="toggle on" id="toggle-sports" onclick="toggleConfig('SPORTS_ENABLED')"><div class="toggle-knob"></div></div>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Arbitrage Scanner</div>
+          <div class="toggle-sub">Enable arbitrage detection</div>
+        </div>
+        <div class="toggle on" id="toggle-arb" onclick="toggleConfig('ARB_ENABLED')"><div class="toggle-knob"></div></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</main>
+</div>
 </div>
 
-<div id="toast-container" class="toast-container"></div>
-<script src="./app.js"></script>
+<script src="app.js"></script>
+<script>
+  // Health check every 15s
+  setInterval(checkHealth, 15000);
+</script>
+<script>
+  // Health check every 15s
+  setInterval(checkHealth, 15000);
+}
+
+init();
+</script>
 </body>
 </html>
