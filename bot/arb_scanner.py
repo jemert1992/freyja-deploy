@@ -98,7 +98,11 @@ class ArbScanner:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            logger.error("Kalshi API HTTP %d for %s", exc.code, url)
+            if exc.code == 404:
+                # 404s are expected — expired/delisted events still appear in the events list
+                logger.debug("Kalshi API 404 (expired event) for %s", url)
+            else:
+                logger.error("Kalshi API HTTP %d for %s", exc.code, url)
             raise
         except Exception as exc:
             logger.error("Kalshi API error for %s: %s", url, exc)
@@ -153,6 +157,12 @@ class ArbScanner:
             data = self._kalshi_get(url)
             markets = data.get("markets", [])
             return markets
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                logger.debug("Skipping expired event %s (404)", event_ticker)
+            else:
+                logger.warning("Failed fetching markets for event %s: %s", event_ticker, exc)
+            return []
         except Exception as exc:
             logger.warning("Failed fetching markets for event %s: %s", event_ticker, exc)
             return []
